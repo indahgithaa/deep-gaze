@@ -1,3 +1,4 @@
+import 'package:deep_gaze/pages/ruang_kelas.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/page_data.dart';
@@ -6,7 +7,6 @@ import '../services/eye_tracking_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../widgets/selectable_button_widget.dart';
-import 'home_page.dart';
 import 'profile_page.dart';
 import 'game_page.dart';
 
@@ -119,7 +119,7 @@ class _SettingsPageState extends State<SettingsPage> {
     Widget nextPage;
     switch (pageIndex) {
       case 0:
-        nextPage = const HomePage();
+        nextPage = const RuangKelas();
         break;
       case 2:
         nextPage = const ProfilePage();
@@ -128,7 +128,7 @@ class _SettingsPageState extends State<SettingsPage> {
         nextPage = const GamePage();
         break;
       default:
-        nextPage = const HomePage();
+        nextPage = const RuangKelas();
     }
 
     Navigator.of(context).pushReplacement(
