@@ -1,9 +1,10 @@
+// File: lib/pages/ruang_kelas.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/page_data.dart';
 import '../models/selectable_button.dart';
-import '../services/seeso_integration_service.dart'; // Use SeeSo integration instead
-import '../widgets/gaze_point_widget.dart';
+import '../services/global_seeso_service.dart'; // Import service global
+import '../widgets/gaze_point_widget.dart'; // Gunakan widget yang sudah ada
 import '../widgets/status_info_widget.dart';
 import '../widgets/selectable_button_widget.dart';
 import 'settings_page.dart';
@@ -18,7 +19,8 @@ class RuangKelas extends StatefulWidget {
 }
 
 class _RuangKelasState extends State<RuangKelas> {
-  late SeesoIntegrationService _eyeTrackingService; // Use SeeSo integration
+  // Gunakan service global yang sama
+  late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
   // Dwell time selection state
@@ -27,19 +29,32 @@ class _RuangKelasState extends State<RuangKelas> {
   Timer? _dwellTimer;
   DateTime? _dwellStartTime;
 
-  // Dwell time configuration - 1.5 seconds for buttons
-  static const int _dwellTimeMs = 1500; // 1.5 seconds
-  static const int _dwellUpdateIntervalMs = 50; // Update every 50ms
+  // Dwell time configuration - 1.5 seconds untuk button
+  static const int _dwellTimeMs = 1500; // 1.5 detik
+  static const int _dwellUpdateIntervalMs = 50; // Update setiap 50ms
 
-  // Button boundaries for automatic detection
+  // Button boundaries untuk deteksi otomatis
   final Map<String, Rect> _buttonBounds = {};
 
   @override
   void initState() {
     super.initState();
-    _eyeTrackingService = SeesoIntegrationService(); // Use SeeSo integration
+
+    print("DEBUG: RuangKelas initState - mengambil service global");
+
+    // Ambil service global yang sudah diinisialisasi
+    _eyeTrackingService = GlobalSeesoService();
+
+    // Add listener untuk update gaze
     _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+
+    // Print status service
+    _eyeTrackingService.debugPrintStatus();
+
+    // Initialize eye tracking (akan menggunakan instance yang sudah ada)
     _initializeEyeTracking();
+
+    // Initialize button bounds
     _initializeButtonBounds();
   }
 
@@ -49,34 +64,32 @@ class _RuangKelasState extends State<RuangKelas> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
 
-    // Remove listener first, then dispose
+    // Remove listener tapi JANGAN dispose service global
     if (_eyeTrackingService.hasListeners) {
       _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
     }
 
-    // Don't dispose the service here as SeeSo should remain active
-    // The main app or calibration page should handle SeeSo disposal
-
+    print("DEBUG: RuangKelas disposed, service tetap hidup");
     super.dispose();
   }
 
   void _initializeButtonBounds() {
-    // Define button boundaries for automatic detection
-    // Adjust these coordinates based on your actual button positions
+    // Definisikan boundaries button untuk deteksi otomatis
+    // Koordinat ini sesuai dengan posisi button di UI
     _buttonBounds['go_to_settings'] = const Rect.fromLTWH(50, 380, 300, 70);
     _buttonBounds['go_to_profile'] = const Rect.fromLTWH(50, 470, 300, 70);
     _buttonBounds['start_game'] = const Rect.fromLTWH(50, 560, 300, 70);
   }
 
   void _onEyeTrackingUpdate() {
-    // Check if widget is disposed
+    // Check kalau widget sudah disposed
     if (_isDisposed || !mounted) return;
 
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
     String? hoveredButton;
 
-    // Check which button (if any) the gaze is currently hovering over
+    // Check button mana yang sedang di-hover oleh gaze
     for (final entry in _buttonBounds.entries) {
       if (entry.value.contains(currentGazePoint)) {
         hoveredButton = entry.key;
@@ -85,19 +98,19 @@ class _RuangKelasState extends State<RuangKelas> {
     }
 
     if (hoveredButton != null) {
-      // Gaze is within a button boundary
+      // Gaze berada di dalam button boundary
       if (_currentDwellingElement != hoveredButton) {
-        // Start dwell timer for new button
+        // Start dwell timer untuk button baru
         final pageData = _getPageData();
         final button =
             pageData.buttons.firstWhere((b) => b.id == hoveredButton);
-        _startDwellTimer(hoveredButton, button.action as int? Function());
+        _startDwellTimer(hoveredButton, button.action as int Function());
       }
-      // If it's the same button, the timer continues running
+      // Jika button yang sama, timer terus berjalan
     } else {
-      // Gaze is not within any button boundary
+      // Gaze tidak berada di button manapun, stop interaksi
       if (_currentDwellingElement != null) {
-        // Cancel current dwell timer
+        // Cancel dwell timer saat ini
         _stopDwellTimer();
       }
     }
@@ -111,14 +124,16 @@ class _RuangKelasState extends State<RuangKelas> {
     if (_isDisposed || !mounted) return;
 
     try {
-      // SeeSo should already be initialized from calibration page
+      print("DEBUG: Initializing eye tracking di RuangKelas");
+
+      // Service sudah diinisialisasi di halaman kalibrasi
+      // Hanya perlu memastikan tracking aktif
       await _eyeTrackingService.initialize(context);
 
-      // Ensure tracking is started
-      await _eyeTrackingService.startTracking();
+      print("DEBUG: Eye tracking berhasil diinisialisasi di RuangKelas");
+      _eyeTrackingService.debugPrintStatus();
     } catch (e) {
       print('Eye tracking initialization failed: $e');
-      // Don't throw the error, just log it
       if (mounted && !_isDisposed) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -132,7 +147,7 @@ class _RuangKelasState extends State<RuangKelas> {
     }
   }
 
-  void _startDwellTimer(String elementId, int? Function() action) {
+  void _startDwellTimer(String elementId, int Function() action) {
     if (_isDisposed || !mounted) return;
     if (_currentDwellingElement == elementId) return;
 
@@ -146,11 +161,10 @@ class _RuangKelasState extends State<RuangKelas> {
     }
 
     _dwellStartTime = DateTime.now();
-
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
       (timer) {
-        // Check if widget is disposed or unmounted
+        // Check kalau widget disposed atau unmounted
         if (_isDisposed || !mounted || _currentDwellingElement != elementId) {
           timer.cancel();
           return;
@@ -179,7 +193,6 @@ class _RuangKelasState extends State<RuangKelas> {
   void _stopDwellTimer() {
     _dwellTimer?.cancel();
     _dwellTimer = null;
-
     if (mounted && !_isDisposed) {
       setState(() {
         _currentDwellingElement = null;
@@ -188,13 +201,13 @@ class _RuangKelasState extends State<RuangKelas> {
     }
   }
 
-  void _onElementSelected(int? Function() action) {
+  void _onElementSelected(int Function() action) {
     if (_isDisposed || !mounted) return;
 
     _stopDwellTimer();
-
     final result = action();
-    if (result != null && result >= 0) {
+
+    if (result >= 0) {
       _navigateToPage(result);
     } else {
       if (mounted && !_isDisposed) {
@@ -212,7 +225,7 @@ class _RuangKelasState extends State<RuangKelas> {
   void _navigateToPage(int pageIndex) {
     if (_isDisposed || !mounted) return;
 
-    // Clean up before navigation
+    // Clean up sebelum navigasi
     _stopDwellTimer();
 
     Widget nextPage;
@@ -237,7 +250,7 @@ class _RuangKelasState extends State<RuangKelas> {
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return SlideTransition(
               position: animation.drive(
-                Tween(begin: const Offset(1.0, 0.0), end: Offset.zero),
+                Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero),
               ),
               child: child,
             );
@@ -275,7 +288,7 @@ class _RuangKelasState extends State<RuangKelas> {
     );
   }
 
-  // Method to update button bounds dynamically if needed
+  // Method untuk update button bounds secara dinamis jika diperlukan
   void updateButtonBounds(String buttonId, Rect bounds) {
     if (!_isDisposed && mounted) {
       _buttonBounds[buttonId] = bounds;
@@ -324,165 +337,115 @@ class _RuangKelasState extends State<RuangKelas> {
                     ),
                     const SizedBox(height: 40),
                     ...pageData.buttons
-                        .map((button) => _buildSelectableButton(button)),
+                        .map((button) => _buildGazeSelectableButton(button)),
                   ],
                 ),
               ),
             ),
           ),
 
-          // Gaze point indicator - only show if tracking is active and stable
-          if (_eyeTrackingService.isTracking &&
-              _eyeTrackingService.isTrackingStable)
-            Positioned(
-              left: _eyeTrackingService.gazeX - 5,
-              top: _eyeTrackingService.gazeY - 5,
-              child: Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: Colors.green, // Green for SeeSo successful tracking
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.green.withOpacity(0.6),
-                      blurRadius: 8,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          // PENTING: Gaze point indicator menggunakan widget yang sudah ada
+          GazePointWidget(
+            gazeX: _eyeTrackingService.gazeX,
+            gazeY: _eyeTrackingService.gazeY,
+            isVisible: _eyeTrackingService.isTracking,
+          ),
 
-          // Status information with SeeSo integration
-          Positioned(
-            top: 50,
-            left: 20,
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.7),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'SeeSo Eye Tracking',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'Status: ${_eyeTrackingService.trackingStatusString}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                    ),
-                  ),
-                  Text(
-                    'Accuracy: ${(_eyeTrackingService.getGazeAccuracy() * 100).toInt()}%',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                    ),
-                  ),
-                  if (_eyeTrackingService.isTracking)
-                    Text(
-                      'Gaze: (${_eyeTrackingService.gazeX.toInt()}, ${_eyeTrackingService.gazeY.toInt()})',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 10,
-                      ),
-                    ),
-                  if (_currentDwellingElement != null)
-                    Text(
-                      'Dwelling: ${(_dwellProgress * 100).toInt()}%',
-                      style: const TextStyle(
-                        color: Colors.yellow,
-                        fontSize: 11,
-                      ),
-                    ),
-                ],
-              ),
-            ),
+          // Status information
+          StatusInfoWidget(
+            statusMessage: _eyeTrackingService.statusMessage,
+            currentPage: 1,
+            totalPages: 4,
+            gazeX: _eyeTrackingService.gazeX,
+            gazeY: _eyeTrackingService.gazeY,
+            currentDwellingElement: _currentDwellingElement,
+            dwellProgress: _dwellProgress,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSelectableButton(SelectableButton button) {
+  Widget _buildGazeSelectableButton(SelectableButton button) {
     final isCurrentlyDwelling = _currentDwellingElement == button.id;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 10),
-      child: Material(
-        elevation: isCurrentlyDwelling ? 8 : 4,
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          width: double.infinity,
-          height: 70,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(15),
-            gradient: LinearGradient(
-              colors: isCurrentlyDwelling
-                  ? [Colors.orange.shade400, Colors.red.shade400]
-                  : [
-                      Colors.white.withOpacity(0.1),
-                      Colors.white.withOpacity(0.05)
-                    ],
+    return GestureDetector(
+      onTap: () {
+        if (isCurrentlyDwelling) {
+          // Jalankan aksi hanya jika sedang di-dwell
+          final pageData = _getPageData();
+          final buttonAction = pageData.buttons
+              .firstWhere((b) => b.id == button.id)
+              .action as int Function();
+          _onElementSelected(buttonAction);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 10),
+        child: Material(
+          elevation: isCurrentlyDwelling ? 8 : 4,
+          borderRadius: BorderRadius.circular(15),
+          child: Container(
+            width: double.infinity,
+            height: 70,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(15),
+              gradient: LinearGradient(
+                colors: isCurrentlyDwelling
+                    ? [Colors.orange.shade400, Colors.red.shade400]
+                    : [
+                        Colors.white.withOpacity(0.1),
+                        Colors.white.withOpacity(0.05)
+                      ],
+              ),
+              border: Border.all(
+                color: isCurrentlyDwelling
+                    ? Colors.white
+                    : Colors.white.withOpacity(0.3),
+                width: 2,
+              ),
             ),
-            border: Border.all(
-              color: isCurrentlyDwelling
-                  ? Colors.white
-                  : Colors.white.withOpacity(0.3),
-              width: 2,
-            ),
-          ),
-          child: Stack(
-            children: [
-              // Progress indicator for dwell time
-              if (isCurrentlyDwelling)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  child: Container(
-                    height: 4,
-                    width: (MediaQuery.of(context).size.width - 40) *
-                        _dwellProgress,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-
-              // Button content
-              Center(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _getIconData(button.icon ?? ''),
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      button.text,
-                      style: const TextStyle(
+            child: Stack(
+              children: [
+                // Progress indicator untuk dwell time
+                if (isCurrentlyDwelling)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    child: Container(
+                      height: 4,
+                      width: (MediaQuery.of(context).size.width - 40) *
+                          _dwellProgress,
+                      decoration: BoxDecoration(
                         color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                  ],
+                  ),
+                // Button content
+                Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _getIconData(button.icon ?? ''),
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        button.text,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

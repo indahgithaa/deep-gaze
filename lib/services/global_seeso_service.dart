@@ -1,5 +1,3 @@
-// File: lib/services/eye_tracking_service.dart
-
 import 'package:deep_gaze/constants/app_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:seeso_flutter/event/gaze_info.dart';
@@ -9,22 +7,28 @@ import 'package:seeso_flutter/seeso.dart';
 import 'package:seeso_flutter/seeso_initialized_result.dart';
 import 'package:seeso_flutter/seeso_plugin_constants.dart';
 
-/// Singleton EyeTrackingService to prevent re-initialization issues
-class EyeTrackingService extends ChangeNotifier {
-  // Singleton pattern
-  static final EyeTrackingService _instance = EyeTrackingService._internal();
-  factory EyeTrackingService() {
-    return _instance;
+/// Global Singleton SeeSo Service
+/// Menjamin SeeSo tetap aktif dari kalibrasi hingga semua halaman
+class GlobalSeesoService extends ChangeNotifier {
+  // Singleton instance
+  static GlobalSeesoService? _instance;
+
+  // Factory constructor untuk singleton
+  factory GlobalSeesoService() {
+    _instance ??= GlobalSeesoService._internal();
+    return _instance!;
   }
-  EyeTrackingService._internal() {
-    print("DEBUG: EyeTrackingService singleton created");
+
+  // Private constructor
+  GlobalSeesoService._internal() {
+    print("DEBUG: GlobalSeesoService singleton created");
   }
 
   // SeeSo instance
   SeeSo? _seesoPlugin;
   static const String _licenseKey = AppConstants.seesoLicenseKey;
 
-  // Current gaze position
+  // Current gaze position - KUNCI untuk gaze point
   double _gazeX = 0.0;
   double _gazeY = 0.0;
 
@@ -37,14 +41,14 @@ class EyeTrackingService extends ChangeNotifier {
   // Gaze tracking quality
   TrackingState _trackingState = TrackingState.FACE_MISSING;
 
+  // Listeners untuk update UI
+  final List<VoidCallback> _listeners = [];
+
   // Calibration state
   bool _isCalibrating = false;
   bool _calibrationComplete = false;
 
-  // Listeners for gaze updates
-  final List<VoidCallback> _listeners = [];
-
-  // Getters
+  // === GETTERS ===
   double get gazeX => _gazeX;
   double get gazeY => _gazeY;
   bool get isTracking => _isTracking && _trackingState == TrackingState.SUCCESS;
@@ -70,15 +74,15 @@ class EyeTrackingService extends ChangeNotifier {
     }
   }
 
-  // Initialize SeeSo (should only be called once)
-  Future<void> initialize(BuildContext context) async {
-    print("DEBUG: initialize() called. Already initialized: $_isInitialized");
+  // === INITIALIZATION ===
+  Future<bool> initializeSeeSo() async {
+    print(
+        "DEBUG: initializeSeeSo() called. Already initialized: $_isInitialized");
 
-    // Skip if already initialized
     if (_isInitialized && _seesoPlugin != null) {
       print("DEBUG: SeeSo already initialized, ensuring tracking is active");
       await _ensureTrackingActive();
-      return;
+      return true;
     }
 
     try {
@@ -109,7 +113,6 @@ class EyeTrackingService extends ChangeNotifier {
 
       InitializedResult? result =
           await _seesoPlugin!.initGazeTracker(licenseKey: _licenseKey);
-
       _isInitialized = result?.result ?? false;
       _statusMessage = result?.message ?? "Unknown initialization result";
 
@@ -117,7 +120,7 @@ class EyeTrackingService extends ChangeNotifier {
       print("DEBUG: SeeSo message: $_statusMessage");
 
       if (_isInitialized) {
-        // Setup event listeners
+        // Setup event listeners SEBELUM start tracking
         _setupEventListeners();
 
         // Start tracking
@@ -129,12 +132,13 @@ class EyeTrackingService extends ChangeNotifier {
       }
 
       notifyListeners();
+      return _isInitialized;
     } catch (e) {
       print("DEBUG: SeeSo initialization error: ${e.toString()}");
       _statusMessage = "Initialization failed: ${e.toString()}";
       _isInitialized = false;
       notifyListeners();
-      rethrow;
+      return false;
     }
   }
 
@@ -142,10 +146,13 @@ class EyeTrackingService extends ChangeNotifier {
     if (_seesoPlugin == null) return;
 
     print("DEBUG: Setting up SeeSo event listeners");
+
     try {
-      // Gaze events
+      // PENTING: Gaze events - ini yang mengupdate gaze point
       _seesoPlugin!.getGazeEvent().listen((event) {
         GazeInfo info = GazeInfo(event);
+
+        // Update gaze position - KUNCI untuk gaze point
         _gazeX = info.x;
         _gazeY = info.y;
         _trackingState = info.trackingState;
@@ -156,6 +163,7 @@ class EyeTrackingService extends ChangeNotifier {
           _statusMessage = "Tracking: ${info.trackingState.toString()}";
         }
 
+        // Notify semua listeners
         _notifyAllListeners();
       });
 
@@ -242,11 +250,13 @@ class EyeTrackingService extends ChangeNotifier {
     }
   }
 
-  // Start calibration
-  Future startCalibration({CalibrationMode mode = CalibrationMode.FIVE}) async {
+  // === CALIBRATION METHODS ===
+  Future<void> startCalibration(
+      {CalibrationMode mode = CalibrationMode.FIVE}) async {
     if (_seesoPlugin == null || !_isInitialized) {
       throw Exception('SeeSo not initialized');
     }
+
     try {
       print("DEBUG: Starting calibration...");
       await _seesoPlugin!.startCalibration(mode);
@@ -262,25 +272,8 @@ class EyeTrackingService extends ChangeNotifier {
     }
   }
 
-  // Public method to start tracking (called from RuangKelas)
-  Future<void> startTracking() async {
-    if (_seesoPlugin == null || !_isInitialized) return;
-    try {
-      print("DEBUG: Starting tracking (public method)...");
-      await _seesoPlugin!.startTracking();
-      _statusMessage = "Starting tracking...";
-      notifyListeners();
-    } catch (e) {
-      print("DEBUG: Start tracking error: ${e.toString()}");
-      _statusMessage = "Start tracking failed: ${e.toString()}";
-      notifyListeners();
-    }
-  }
-
-  // Start collecting samples (called during calibration)
   Future<void> startCollectSamples() async {
     if (_seesoPlugin == null) return;
-
     try {
       await _seesoPlugin!.startCollectSamples();
     } catch (e) {
@@ -288,27 +281,12 @@ class EyeTrackingService extends ChangeNotifier {
     }
   }
 
-  // Stop tracking
-  Future<void> stopTracking() async {
-    if (_seesoPlugin == null || !_isInitialized) return;
-
-    try {
-      await _seesoPlugin!.stopTracking();
-      _isTracking = false;
-      _statusMessage = "Tracking stopped";
-      notifyListeners();
-    } catch (e) {
-      print("DEBUG: Stop tracking error: ${e.toString()}");
-    }
-  }
-
-  // Add listener
+  // === LISTENER MANAGEMENT ===
   void addListener(VoidCallback listener) {
     _listeners.add(listener);
     print("DEBUG: Listener added. Total listeners: ${_listeners.length}");
   }
 
-  // Remove listener
   void removeListener(VoidCallback listener) {
     _listeners.remove(listener);
     print("DEBUG: Listener removed. Total listeners: ${_listeners.length}");
@@ -316,7 +294,22 @@ class EyeTrackingService extends ChangeNotifier {
 
   bool get hasListeners => _listeners.isNotEmpty || super.hasListeners;
 
-  // Compatibility methods for existing code
+  // === COMPATIBILITY METHODS ===
+  // Method ini untuk kompatibilitas dengan existing code
+  Future<void> initialize(BuildContext context) async {
+    print("DEBUG: initialize() called from UI component");
+
+    if (!_isInitialized) {
+      bool success = await initializeSeeSo();
+      if (!success) {
+        throw Exception("SeeSo initialization failed");
+      }
+    }
+
+    // Ensure tracking is active
+    await _ensureTrackingActive();
+  }
+
   Offset getCalibratedGaze() {
     return Offset(_gazeX, _gazeY);
   }
@@ -339,10 +332,24 @@ class EyeTrackingService extends ChangeNotifier {
     }
   }
 
-  // Debug method
+  // === UTILITY METHODS ===
+  Future<void> stopTracking() async {
+    if (_seesoPlugin == null || !_isInitialized) return;
+
+    try {
+      await _seesoPlugin!.stopTracking();
+      _isTracking = false;
+      _statusMessage = "Tracking stopped";
+      notifyListeners();
+    } catch (e) {
+      print("DEBUG: Stop tracking error: ${e.toString()}");
+    }
+  }
+
+  // === DEBUG METHODS ===
   void debugPrintStatus() {
     print("""
-=== EyeTrackingService Singleton Status ===
+=== GlobalSeesoService Status ===
 SeeSo Plugin: ${_seesoPlugin != null ? 'Created' : 'NULL'}
 Initialized: $_isInitialized
 Tracking: $_isTracking
@@ -353,14 +360,14 @@ Calibrating: $_isCalibrating
 Calibration Complete: $_calibrationComplete
 Listeners: ${_listeners.length}
 Gaze Position: ($_gazeX, $_gazeY)
-==========================================
+=================================
     """);
   }
 
-  // Cleanup method (call when app closes completely)
+  // === CLEANUP ===
   void cleanup() {
     try {
-      print("DEBUG: Cleaning up EyeTrackingService...");
+      print("DEBUG: Cleaning up GlobalSeesoService...");
 
       if (_isTracking && _seesoPlugin != null) {
         _seesoPlugin!.stopTracking();
@@ -383,8 +390,7 @@ Gaze Position: ($_gazeX, $_gazeY)
 
   @override
   void dispose() {
-    // Don't dispose automatically - only when explicitly called
-    // This allows the singleton to persist across pages
+    // Jangan dispose otomatis - singleton harus persist
     print("DEBUG: dispose() called - but singleton will persist");
     super.dispose();
   }

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/page_data.dart';
 import '../models/selectable_button.dart';
-import '../services/eye_tracking_service.dart';
+import '../services/global_seeso_service.dart'; // Gunakan service global
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../widgets/selectable_button_widget.dart';
@@ -18,7 +18,7 @@ class GamePage extends StatefulWidget {
 }
 
 class _GamePageState extends State<GamePage> {
-  late EyeTrackingService _eyeTrackingService;
+  late GlobalSeesoService _eyeTrackingService;
 
   // Dwell time selection state
   String? _currentDwellingElement;
@@ -33,7 +33,7 @@ class _GamePageState extends State<GamePage> {
   @override
   void initState() {
     super.initState();
-    _eyeTrackingService = EyeTrackingService();
+    _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.addListener(_onEyeTrackingUpdate);
     _initializeEyeTracking();
   }
@@ -42,7 +42,7 @@ class _GamePageState extends State<GamePage> {
   void dispose() {
     _dwellTimer?.cancel();
     _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    _eyeTrackingService.dispose();
+    // JANGAN dispose service global
     super.dispose();
   }
 
@@ -56,6 +56,7 @@ class _GamePageState extends State<GamePage> {
 
   void _startDwellTimer(String elementId, VoidCallback action) {
     if (_currentDwellingElement == elementId) return;
+
     _stopDwellTimer();
 
     setState(() {
@@ -64,7 +65,6 @@ class _GamePageState extends State<GamePage> {
     });
 
     _dwellStartTime = DateTime.now();
-
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
       (timer) {
@@ -100,7 +100,6 @@ class _GamePageState extends State<GamePage> {
 
   void _onElementSelected(VoidCallback action) {
     _stopDwellTimer();
-
     action();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -133,7 +132,7 @@ class _GamePageState extends State<GamePage> {
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
             position: animation.drive(
-              Tween(begin: const Offset(1.0, 0.0), end: Offset.zero),
+              Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero),
             ),
             child: child,
           );
@@ -244,7 +243,6 @@ class _GamePageState extends State<GamePage> {
 
   Widget _buildSelectableButton(SelectableButton button) {
     final isCurrentlyDwelling = _currentDwellingElement == button.id;
-
     return SelectableButtonWidget(
       button: button,
       isCurrentlyDwelling: isCurrentlyDwelling,

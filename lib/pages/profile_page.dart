@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/page_data.dart';
 import '../models/selectable_button.dart';
-import '../services/eye_tracking_service.dart';
+import '../services/global_seeso_service.dart'; // Gunakan service global
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../widgets/selectable_button_widget.dart';
@@ -18,7 +18,7 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  late EyeTrackingService _eyeTrackingService;
+  late GlobalSeesoService _eyeTrackingService;
 
   // Dwell time selection state
   String? _currentDwellingElement;
@@ -33,7 +33,7 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    _eyeTrackingService = EyeTrackingService();
+    _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.addListener(_onEyeTrackingUpdate);
     _initializeEyeTracking();
   }
@@ -42,7 +42,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void dispose() {
     _dwellTimer?.cancel();
     _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    _eyeTrackingService.dispose();
+    // JANGAN dispose service global
     super.dispose();
   }
 
@@ -54,8 +54,9 @@ class _ProfilePageState extends State<ProfilePage> {
     await _eyeTrackingService.initialize(context);
   }
 
-  void _startDwellTimer(String elementId, VoidCallback action) {
+  void _startDwellTimer(String elementId, Function action) {
     if (_currentDwellingElement == elementId) return;
+
     _stopDwellTimer();
 
     setState(() {
@@ -64,7 +65,6 @@ class _ProfilePageState extends State<ProfilePage> {
     });
 
     _dwellStartTime = DateTime.now();
-
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
       (timer) {
@@ -100,7 +100,6 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _onElementSelected(Function action) {
     _stopDwellTimer();
-
     final result = action();
     if (result is int && result >= 0) {
       _navigateToPage(result);
@@ -137,7 +136,7 @@ class _ProfilePageState extends State<ProfilePage> {
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
             position: animation.drive(
-              Tween(begin: const Offset(1.0, 0.0), end: Offset.zero),
+              Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero),
             ),
             child: child,
           );
@@ -248,7 +247,6 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _buildSelectableButton(SelectableButton button) {
     final isCurrentlyDwelling = _currentDwellingElement == button.id;
-
     return SelectableButtonWidget(
       button: button,
       isCurrentlyDwelling: isCurrentlyDwelling,

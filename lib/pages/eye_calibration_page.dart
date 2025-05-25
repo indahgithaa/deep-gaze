@@ -1,7 +1,6 @@
 import 'package:deep_gaze/pages/ruang_kelas.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:math';
 import '../services/eye_tracking_service.dart';
 import '../services/eye_tracking_extensions.dart';
 import '../widgets/gaze_point_widget.dart';

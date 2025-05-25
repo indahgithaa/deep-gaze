@@ -1,3 +1,4 @@
+// File: lib/pages/seeso_eye_calibration_page.dart
 import 'package:deep_gaze/constants/app_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:seeso_flutter/event/status_info.dart';
 import 'package:seeso_flutter/seeso.dart';
 import 'package:seeso_flutter/seeso_initialized_result.dart';
 import 'package:seeso_flutter/seeso_plugin_constants.dart';
+import '../services/global_seeso_service.dart'; // Import service global
 import 'ruang_kelas.dart';
 
 class SeesoEyeCalibrationPage extends StatefulWidget {
@@ -20,24 +22,16 @@ class SeesoEyeCalibrationPage extends StatefulWidget {
 
 class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
     with TickerProviderStateMixin {
-  // SeeSo Plugin
+  // Gunakan service global
+  late GlobalSeesoService _seesoService;
+
+  // SeeSo Plugin untuk kalibrasi
   final _seesoPlugin = SeeSo();
   static const String _licenseKey = AppConstants.seesoLicenseKey;
 
   // State variables
   String _version = "Unknown";
-  String _hasCameraPermissionString = "NOT_GRANTED";
-  String _stateString = "IDLE";
-  bool _hasCameraPermission = false;
-  bool _isInitialized = false;
-  bool _isTracking = false;
-  bool _isCalibrating = false;
-  bool _calibrationComplete = false;
   bool _isDisposed = false;
-
-  // Gaze tracking
-  double _gazeX = 0.0, _gazeY = 0.0;
-  MaterialColor _gazeColor = Colors.red;
 
   // Calibration
   double _nextX = 0, _nextY = 0, _calibrationProgress = 0.0;
@@ -55,12 +49,14 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
   void initState() {
     super.initState();
 
+    // Initialize service global
+    _seesoService = GlobalSeesoService();
+
     // Initialize animation controllers
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
-
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -90,17 +86,8 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
     _isDisposed = true;
     _pulseController.dispose();
     _fadeController.dispose();
-
-    // Clean up SeeSo resources
-    if (_isInitialized) {
-      try {
-        _seesoPlugin.stopTracking();
-        _seesoPlugin.deinitGazeTracker();
-      } catch (e) {
-        print('Error disposing SeeSo: $e');
-      }
-    }
-
+    // JANGAN dispose service global di sini!
+    // Service harus tetap hidup untuk halaman berikutnya
     super.dispose();
   }
 
@@ -111,24 +98,26 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
       // Get SeeSo version
       await _getSeeSoVersion();
 
-      // Check camera permission
-      await _checkCameraPermission();
+      setState(() {
+        _currentStage = AppStage.initializing;
+      });
 
-      if (_hasCameraPermission) {
+      // Initialize service global
+      bool success = await _seesoService.initializeSeeSo();
+
+      if (success) {
+        _listenToSeesoEvents();
         setState(() {
-          _currentStage = AppStage.initializing;
+          _currentStage = AppStage.initialized;
         });
-
-        await _initGazeTracker();
       } else {
         setState(() {
-          _currentStage = AppStage.permissionDenied;
+          _currentStage = AppStage.error;
         });
       }
     } catch (e) {
       if (mounted && !_isDisposed) {
         setState(() {
-          _stateString = "Initialization failed: ${e.toString()}";
           _currentStage = AppStage.error;
         });
       }
@@ -137,7 +126,6 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
 
   Future<void> _getSeeSoVersion() async {
     if (_isDisposed) return;
-
     try {
       String? seesoVersion = await _seesoPlugin.getSeeSoVersion();
       if (mounted && !_isDisposed) {
@@ -150,115 +138,8 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
     }
   }
 
-  Future<void> _checkCameraPermission() async {
-    if (_isDisposed) return;
-
-    try {
-      _hasCameraPermission = await _seesoPlugin.checkCameraPermission();
-
-      if (!_hasCameraPermission) {
-        _hasCameraPermission = await _seesoPlugin.requestCameraPermission();
-      }
-
-      if (mounted && !_isDisposed) {
-        setState(() {
-          _hasCameraPermissionString =
-              _hasCameraPermission ? "GRANTED" : "DENIED";
-        });
-      }
-    } catch (e) {
-      print('Camera permission error: $e');
-    }
-  }
-
-  Future<void> _initGazeTracker() async {
-    if (_isDisposed) return;
-
-    try {
-      InitializedResult? result =
-          await _seesoPlugin.initGazeTracker(licenseKey: _licenseKey);
-
-      if (mounted && !_isDisposed) {
-        setState(() {
-          _isInitialized = result?.result ?? false;
-          _stateString = result?.message ?? "Unknown error";
-        });
-
-        if (_isInitialized) {
-          _listenToSeesoEvents();
-          await _startTracking();
-          setState(() {
-            _currentStage = AppStage.initialized;
-          });
-        } else {
-          setState(() {
-            _currentStage = AppStage.error;
-          });
-        }
-      }
-    } catch (e) {
-      if (mounted && !_isDisposed) {
-        setState(() {
-          _stateString = "Init failed: ${e.toString()}";
-          _currentStage = AppStage.error;
-        });
-      }
-    }
-  }
-
-  Future<void> _startTracking() async {
-    if (_isDisposed || !_isInitialized) return;
-
-    try {
-      await _seesoPlugin.startTracking();
-      if (mounted && !_isDisposed) {
-        setState(() {
-          _isTracking = true;
-        });
-      }
-    } catch (e) {
-      print('Start tracking error: $e');
-    }
-  }
-
   void _listenToSeesoEvents() {
     if (_isDisposed) return;
-
-    // Listen to gaze events
-    _seesoPlugin.getGazeEvent().listen((event) {
-      if (_isDisposed || !mounted) return;
-
-      GazeInfo info = GazeInfo(event);
-      if (info.trackingState == TrackingState.SUCCESS) {
-        setState(() {
-          _gazeX = info.x;
-          _gazeY = info.y;
-          _gazeColor = Colors.green;
-        });
-      } else {
-        setState(() {
-          _gazeColor = Colors.red;
-        });
-      }
-    });
-
-    // Listen to status events
-    _seesoPlugin.getStatusEvent().listen((event) {
-      if (_isDisposed || !mounted) return;
-
-      StatusInfo statusInfo = StatusInfo(event);
-      if (statusInfo.type == StatusType.START) {
-        setState(() {
-          _stateString = "Tracking Started";
-          _isTracking = true;
-        });
-      } else {
-        setState(() {
-          _stateString = "Tracking Stopped: ${statusInfo.stateErrorType}";
-          _isTracking = false;
-        });
-      }
-    });
 
     // Listen to calibration events
     _seesoPlugin.getCalibrationEvent().listen((event) {
@@ -275,8 +156,8 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
 
         // Start collecting samples after a short delay
         Future.delayed(const Duration(milliseconds: 500), () {
-          if (!_isDisposed && _isCalibrating) {
-            _seesoPlugin.startCollectSamples();
+          if (!_isDisposed && _seesoService.isCalibrating) {
+            _seesoService.startCollectSamples();
           }
         });
       } else if (caliInfo.type == CalibrationType.CALIBRATION_PROGRESS) {
@@ -285,8 +166,6 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
         });
       } else if (caliInfo.type == CalibrationType.CALIBRATION_FINISHED) {
         setState(() {
-          _isCalibrating = false;
-          _calibrationComplete = true;
           _currentStage = AppStage.calibrationComplete;
         });
 
@@ -304,21 +183,16 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
   }
 
   void _startCalibration() {
-    if (_isDisposed || !_isInitialized || !_isTracking) return;
+    if (_isDisposed || !_seesoService.isInitialized) return;
 
     try {
-      _seesoPlugin.startCalibration(CalibrationMode.FIVE);
+      _seesoService.startCalibration(mode: CalibrationMode.FIVE);
       setState(() {
-        _isCalibrating = true;
         _currentStage = AppStage.calibrating;
       });
-
       _pulseController.repeat(reverse: true);
     } catch (e) {
       print('Calibration start error: $e');
-      setState(() {
-        _stateString = "Calibration failed: ${e.toString()}";
-      });
     }
   }
 
@@ -351,6 +225,9 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
 
   void _navigateToClassroom() {
     if (_isDisposed || !mounted) return;
+
+    print("DEBUG: Navigating to classroom. Service status:");
+    _seesoService.debugPrintStatus();
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
@@ -391,20 +268,20 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
               ),
             ),
 
-            // Gaze point indicator
-            if (_isTracking && !_isCalibrating)
+            // Gaze point indicator - GUNAKAN SERVICE GLOBAL
+            if (_seesoService.isTracking)
               Positioned(
-                left: _gazeX - 5,
-                top: _gazeY - 5,
+                left: _seesoService.gazeX - 5,
+                top: _seesoService.gazeY - 5,
                 child: Container(
                   width: 10,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: _gazeColor,
+                    color: Colors.green,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: _gazeColor.withOpacity(0.6),
+                        color: Colors.green.withOpacity(0.6),
                         blurRadius: 8,
                         spreadRadius: 2,
                       ),
@@ -414,7 +291,7 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
               ),
 
             // Calibration point
-            if (_isCalibrating)
+            if (_seesoService.isCalibrating)
               Positioned(
                 left: _nextX - 20,
                 top: _nextY - 20,
@@ -472,25 +349,18 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
     switch (_currentStage) {
       case AppStage.checkingPermission:
         return _buildLoadingWidget("Checking camera permission...");
-
       case AppStage.permissionDenied:
         return _buildPermissionWidget();
-
       case AppStage.initializing:
         return _buildLoadingWidget("Initializing eye tracking...");
-
       case AppStage.error:
         return _buildErrorWidget();
-
       case AppStage.initialized:
         return _buildReadyWidget();
-
       case AppStage.calibrating:
         return _buildCalibratingWidget();
-
       case AppStage.calibrationComplete:
         return _buildCompletionWidget();
-
       default:
         return _buildLoadingWidget("Loading...");
     }
@@ -549,7 +419,7 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
           ),
           const SizedBox(height: 30),
           ElevatedButton(
-            onPressed: _checkCameraPermission,
+            onPressed: _initializeSeeSo,
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blue.shade600,
               foregroundColor: Colors.white,
@@ -584,7 +454,7 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
           ),
           const SizedBox(height: 16),
           Text(
-            _stateString,
+            _seesoService.statusMessage,
             style: const TextStyle(
               fontSize: 16,
               color: Colors.white70,
@@ -790,22 +660,22 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
               ),
             ),
             Text(
-              'Camera: $_hasCameraPermissionString',
+              'Camera: ${_seesoService.hasCameraPermission ? "GRANTED" : "DENIED"}',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
               ),
             ),
             Text(
-              'Status: $_stateString',
+              'Status: ${_seesoService.statusMessage}',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
               ),
             ),
-            if (_isTracking)
+            if (_seesoService.isTracking)
               Text(
-                'Gaze: (${_gazeX.toInt()}, ${_gazeY.toInt()})',
+                'Gaze: (${_seesoService.gazeX.toInt()}, ${_seesoService.gazeY.toInt()})',
                 style: const TextStyle(
                   color: Colors.white70,
                   fontSize: 10,
