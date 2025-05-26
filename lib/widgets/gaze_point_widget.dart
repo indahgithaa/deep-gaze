@@ -1,3 +1,4 @@
+// File: lib/widgets/gaze_point_widget.dart
 import 'package:flutter/material.dart';
 
 class GazePointWidget extends StatefulWidget {
@@ -6,7 +7,6 @@ class GazePointWidget extends StatefulWidget {
   final bool isVisible;
   final Color? color;
   final double size;
-  final bool showTrail;
 
   const GazePointWidget({
     super.key,
@@ -15,7 +15,6 @@ class GazePointWidget extends StatefulWidget {
     this.isVisible = true,
     this.color,
     this.size = 20.0,
-    this.showTrail = false,
   });
 
   @override
@@ -26,10 +25,6 @@ class _GazePointWidgetState extends State<GazePointWidget>
     with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-
-  // Trail untuk tracking history
-  final List<Offset> _gazeTrail = [];
-  static const int _maxTrailLength = 10;
 
   @override
   void initState() {
@@ -59,144 +54,52 @@ class _GazePointWidgetState extends State<GazePointWidget>
   }
 
   @override
-  void didUpdateWidget(GazePointWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    // Update trail jika posisi berubah
-    if (widget.gazeX != oldWidget.gazeX || widget.gazeY != oldWidget.gazeY) {
-      _updateTrail();
-    }
-  }
-
-  void _updateTrail() {
-    if (!widget.showTrail) return;
-
-    final newPoint = Offset(widget.gazeX, widget.gazeY);
-
-    // Tambahkan point baru jika berbeda dari yang terakhir
-    if (_gazeTrail.isEmpty || (_gazeTrail.last - newPoint).distance > 5.0) {
-      _gazeTrail.add(newPoint);
-
-      // Hapus point lama jika terlalu banyak
-      if (_gazeTrail.length > _maxTrailLength) {
-        _gazeTrail.removeAt(0);
-      }
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     if (!widget.isVisible) return const SizedBox.shrink();
 
-    // Debug print untuk memastikan koordinat diterima
-    print(
-        "DEBUG: GazePoint - X: ${widget.gazeX.toInt()}, Y: ${widget.gazeY.toInt()}, Visible: ${widget.isVisible}");
-
-    return Stack(
-      children: [
-        // Trail points (jika enabled)
-        if (widget.showTrail) ..._buildTrailPoints(),
-
-        // Main gaze point
-        Positioned(
-          left: widget.gazeX - (widget.size / 2),
-          top: widget.gazeY - (widget.size / 2),
-          child: IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _pulseAnimation,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _pulseAnimation.value,
-                  child: Container(
-                    width: widget.size,
-                    height: widget.size,
-                    decoration: BoxDecoration(
-                      color: (widget.color ?? Colors.green).withOpacity(0.9),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color:
-                              (widget.color ?? Colors.green).withOpacity(0.6),
-                          blurRadius: 15,
-                          spreadRadius: 3,
-                        ),
-                        BoxShadow(
-                          color: Colors.white.withOpacity(0.8),
-                          blurRadius: 8,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                    child: Container(
-                      width: widget.size * 0.4,
-                      height: widget.size * 0.4,
-                      margin: EdgeInsets.all(widget.size * 0.3),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-
-        // Debug overlay (hanya dalam debug mode)
-        if (true) // Set false untuk production
-          Positioned(
-            left: widget.gazeX + 25,
-            top: widget.gazeY - 10,
-            child: IgnorePointer(
+    return Positioned(
+      left: widget.gazeX - (widget.size / 2),
+      top: widget.gazeY - (widget.size / 2),
+      child: IgnorePointer(
+        child: AnimatedBuilder(
+          animation: _pulseAnimation,
+          builder: (context, child) {
+            return Transform.scale(
+              scale: _pulseAnimation.value,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                width: widget.size,
+                height: widget.size,
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(4),
+                  color: (widget.color ?? Colors.green).withOpacity(0.9),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: (widget.color ?? Colors.green).withOpacity(0.6),
+                      blurRadius: 15,
+                      spreadRadius: 3,
+                    ),
+                    BoxShadow(
+                      color: Colors.white.withOpacity(0.8),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    ),
+                  ],
                 ),
-                child: Text(
-                  '(${widget.gazeX.toInt()}, ${widget.gazeY.toInt()})',
-                  style: const TextStyle(
+                child: Container(
+                  width: widget.size * 0.4,
+                  height: widget.size * 0.4,
+                  margin: EdgeInsets.all(widget.size * 0.3),
+                  decoration: const BoxDecoration(
                     color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
+                    shape: BoxShape.circle,
                   ),
                 ),
               ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  List<Widget> _buildTrailPoints() {
-    List<Widget> trailWidgets = [];
-
-    for (int i = 0; i < _gazeTrail.length; i++) {
-      final point = _gazeTrail[i];
-      final opacity = (i + 1) / _gazeTrail.length * 0.6;
-      final size = widget.size * (0.3 + (i + 1) / _gazeTrail.length * 0.4);
-
-      trailWidgets.add(
-        Positioned(
-          left: point.dx - (size / 2),
-          top: point.dy - (size / 2),
-          child: IgnorePointer(
-            child: Container(
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                color: (widget.color ?? Colors.green).withOpacity(opacity),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
+            );
+          },
         ),
-      );
-    }
-
-    return trailWidgets;
+      ),
+    );
   }
 }
 

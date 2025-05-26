@@ -268,27 +268,27 @@ class _SeesoEyeCalibrationPageState extends State<SeesoEyeCalibrationPage>
               ),
             ),
 
-            // Gaze point indicator - GUNAKAN SERVICE GLOBAL
-            if (_seesoService.isTracking)
-              Positioned(
-                left: _seesoService.gazeX - 5,
-                top: _seesoService.gazeY - 5,
-                child: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: Colors.green,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.green.withOpacity(0.6),
-                        blurRadius: 8,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+            // Gaze point indicator - DISEMBUNYIKAN di halaman kalibrasi
+            // if (_seesoService.isTracking)
+            //   Positioned(
+            //     left: _seesoService.gazeX - 5,
+            //     top: _seesoService.gazeY - 5,
+            //     child: Container(
+            //       width: 10,
+            //       height: 10,
+            //       decoration: BoxDecoration(
+            //         color: Colors.green,
+            //         shape: BoxShape.circle,
+            //         boxShadow: [
+            //           BoxShadow(
+            //             color: Colors.green.withOpacity(0.6),
+            //             blurRadius: 8,
+            //             spreadRadius: 2,
+            //           ),
+            //         ],
+            //       ),
+            //     ),
+            //   ),
 
             // Calibration point
             if (_seesoService.isCalibrating)
