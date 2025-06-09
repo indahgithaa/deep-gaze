@@ -1,9 +1,16 @@
-import 'package:deep_gaze/pages/ruang_kelas.dart';
+// File: lib/pages/seeso_eye_calibration_page.dart
+import 'package:deep_gaze/constants/app_constants.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
-import '../services/eye_tracking_service.dart';
-import '../services/eye_tracking_extensions.dart';
-import '../widgets/gaze_point_widget.dart';
+import 'package:seeso_flutter/event/calibration_info.dart';
+import 'package:seeso_flutter/event/gaze_info.dart';
+import 'package:seeso_flutter/event/status_info.dart';
+import 'package:seeso_flutter/seeso.dart';
+import 'package:seeso_flutter/seeso_initialized_result.dart';
+import 'package:seeso_flutter/seeso_plugin_constants.dart';
+import '../services/global_seeso_service.dart'; // Import service global
+import 'ruang_kelas.dart';
 
 class EyeCalibrationPage extends StatefulWidget {
   const EyeCalibrationPage({super.key});
@@ -14,238 +21,181 @@ class EyeCalibrationPage extends StatefulWidget {
 
 class _EyeCalibrationPageState extends State<EyeCalibrationPage>
     with TickerProviderStateMixin {
-  late EyeTrackingService _eyeTrackingService;
+  // Gunakan service global
+  late GlobalSeesoService _seesoService;
+
+  // SeeSo Plugin untuk kalibrasi
+  final _seesoPlugin = SeeSo();
+  static const String _licenseKey = AppConstants.seesoLicenseKey;
+
+  // State variables
+  String _version = "Unknown";
   bool _isDisposed = false;
 
-  // Calibration state
-  int _currentCalibrationPoint = 0;
-  bool _isCalibrating = false;
-  bool _calibrationComplete = false;
-  Timer? _calibrationTimer;
-  int _calibrationCountdown = 0;
+  // Calibration
+  double _nextX = 0, _nextY = 0, _calibrationProgress = 0.0;
 
   // Animation controllers
   late AnimationController _pulseController;
-  late AnimationController _progressController;
+  late AnimationController _fadeController;
   late Animation<double> _pulseAnimation;
-  late Animation<double> _progressAnimation;
+  late Animation<double> _fadeAnimation;
 
-  // Calibration points (9-point calibration)
-  final List<CalibrationPoint> _calibrationPoints = [
-    CalibrationPoint(0.1, 0.1, "Top Left"), // Top-left
-    CalibrationPoint(0.5, 0.1, "Top Center"), // Top-center
-    CalibrationPoint(0.9, 0.1, "Top Right"), // Top-right
-    CalibrationPoint(0.1, 0.5, "Middle Left"), // Middle-left
-    CalibrationPoint(0.5, 0.5, "Center"), // Center
-    CalibrationPoint(0.9, 0.5, "Middle Right"), // Middle-right
-    CalibrationPoint(0.1, 0.9, "Bottom Left"), // Bottom-left
-    CalibrationPoint(0.5, 0.9, "Bottom Center"), // Bottom-center
-    CalibrationPoint(0.9, 0.9, "Bottom Right"), // Bottom-right
-  ];
+  // App stage
+  AppStage _currentStage = AppStage.checkingPermission;
 
   @override
   void initState() {
     super.initState();
-    _eyeTrackingService = EyeTrackingService();
-    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+
+    // Initialize service global
+    _seesoService = GlobalSeesoService();
 
     // Initialize animation controllers
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
-
-    _progressController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 500),
       vsync: this,
     );
 
     _pulseAnimation = Tween<double>(
       begin: 1.0,
-      end: 1.3,
+      end: 1.4,
     ).animate(CurvedAnimation(
       parent: _pulseController,
       curve: Curves.easeInOut,
     ));
 
-    _progressAnimation = Tween<double>(
+    _fadeAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
     ).animate(CurvedAnimation(
-      parent: _progressController,
+      parent: _fadeController,
       curve: Curves.easeInOut,
     ));
 
-    _initializeEyeTracking();
+    _initializeSeeSo();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    _calibrationTimer?.cancel();
     _pulseController.dispose();
-    _progressController.dispose();
-
-    if (_eyeTrackingService.hasListeners) {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    }
-
+    _fadeController.dispose();
+    // JANGAN dispose service global di sini!
+    // Service harus tetap hidup untuk halaman berikutnya
     super.dispose();
   }
 
-  void _onEyeTrackingUpdate() {
-    if (_isDisposed || !mounted) return;
+  Future<void> _initializeSeeSo() async {
+    if (_isDisposed) return;
 
-    if (mounted && !_isDisposed) {
-      setState(() {});
+    try {
+      // Get SeeSo version
+      await _getSeeSoVersion();
+
+      setState(() {
+        _currentStage = AppStage.initializing;
+      });
+
+      // Initialize service global
+      bool success = await _seesoService.initializeSeeSo();
+
+      if (success) {
+        _listenToSeesoEvents();
+        setState(() {
+          _currentStage = AppStage.initialized;
+        });
+      } else {
+        setState(() {
+          _currentStage = AppStage.error;
+        });
+      }
+    } catch (e) {
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _currentStage = AppStage.error;
+        });
+      }
     }
   }
 
-  Future<void> _initializeEyeTracking() async {
-    if (_isDisposed || !mounted) return;
-
+  Future<void> _getSeeSoVersion() async {
+    if (_isDisposed) return;
     try {
-      await _eyeTrackingService.initialize(context);
+      String? seesoVersion = await _seesoPlugin.getSeeSoVersion();
       if (mounted && !_isDisposed) {
-        setState(() {});
+        setState(() {
+          _version = seesoVersion ?? "Unknown";
+        });
       }
     } catch (e) {
-      print('Eye tracking initialization failed: $e');
-      if (mounted && !_isDisposed) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text("Eye tracking initialization failed: ${e.toString()}"),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+      print('Failed to get SeeSo version: $e');
     }
+  }
+
+  void _listenToSeesoEvents() {
+    if (_isDisposed) return;
+
+    // Listen to calibration events
+    _seesoPlugin.getCalibrationEvent().listen((event) {
+      if (_isDisposed || !mounted) return;
+
+      CalibrationInfo caliInfo = CalibrationInfo(event);
+
+      if (caliInfo.type == CalibrationType.CALIBRATION_NEXT_XY) {
+        setState(() {
+          _nextX = caliInfo.nextX!;
+          _nextY = caliInfo.nextY!;
+          _calibrationProgress = 0.0;
+        });
+
+        // Start collecting samples after a short delay
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (!_isDisposed && _seesoService.isCalibrating) {
+            _seesoService.startCollectSamples();
+          }
+        });
+      } else if (caliInfo.type == CalibrationType.CALIBRATION_PROGRESS) {
+        setState(() {
+          _calibrationProgress = caliInfo.progress!;
+        });
+      } else if (caliInfo.type == CalibrationType.CALIBRATION_FINISHED) {
+        setState(() {
+          _currentStage = AppStage.calibrationComplete;
+        });
+
+        _pulseController.stop();
+        _fadeController.forward();
+
+        // Navigate to classroom after showing completion
+        Future.delayed(const Duration(seconds: 2), () {
+          if (!_isDisposed && mounted) {
+            _navigateToClassroom();
+          }
+        });
+      }
+    });
   }
 
   void _startCalibration() {
-    if (_isDisposed || !mounted) return;
+    if (_isDisposed || !_seesoService.isInitialized) return;
 
-    setState(() {
-      _isCalibrating = true;
-      _currentCalibrationPoint = 0;
-      _calibrationComplete = false;
-    });
-
-    _pulseController.repeat(reverse: true);
-    _startCalibrationPoint();
-  }
-
-  void _startCalibrationPoint() {
-    if (_isDisposed || !mounted) return;
-
-    setState(() {
-      _calibrationCountdown = 3; // 3 second countdown
-    });
-
-    _calibrationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_isDisposed || !mounted) {
-        timer.cancel();
-        return;
-      }
-
+    try {
+      _seesoService.startCalibration(mode: CalibrationMode.FIVE);
       setState(() {
-        _calibrationCountdown--;
+        _currentStage = AppStage.calibrating;
       });
-
-      if (_calibrationCountdown <= 0) {
-        timer.cancel();
-        _completeCalibrationPoint();
-      }
-    });
-  }
-
-  void _completeCalibrationPoint() {
-    if (_isDisposed || !mounted) return;
-
-    final currentPoint = _calibrationPoints[_currentCalibrationPoint];
-
-    // Simulate calibration data collection
-    // In real implementation, this would collect gaze data
-    _eyeTrackingService.addCalibrationPoint(currentPoint.x, currentPoint.y);
-
-    _progressController.forward().then((_) {
-      if (_isDisposed || !mounted) return;
-
-      _progressController.reset();
-
-      setState(() {
-        _currentCalibrationPoint++;
-      });
-
-      if (_currentCalibrationPoint >= _calibrationPoints.length) {
-        _completeCalibration();
-      } else {
-        _startCalibrationPoint();
-      }
-    });
-  }
-
-  void _completeCalibration() {
-    if (_isDisposed || !mounted) return;
-
-    _pulseController.stop();
-    _pulseController.reset();
-
-    setState(() {
-      _isCalibrating = false;
-      _calibrationComplete = true;
-    });
-
-    // Validate calibration quality
-    final accuracy = _eyeTrackingService.getCalibrationAccuracy();
-    final status = _eyeTrackingService.getCalibrationStatus();
-
-    print(
-        'Calibration completed with ${accuracy.toStringAsFixed(1)}% accuracy ($status)');
-
-    // Show calibration results
-    if (mounted && !_isDisposed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Calibration Complete: ${accuracy.toStringAsFixed(1)}% accuracy ($status)',
-          ),
-          backgroundColor: accuracy >= 70 ? Colors.green : Colors.orange,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      _pulseController.repeat(reverse: true);
+    } catch (e) {
+      print('Calibration start error: $e');
     }
-
-    // Show completion message and navigate
-    Future.delayed(const Duration(seconds: 2), () {
-      if (_isDisposed || !mounted) return;
-      _navigateToMainApp();
-    });
-  }
-
-  void _navigateToMainApp() {
-    if (_isDisposed || !mounted) return;
-
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const RuangKelas(), // atau RuangKelas()
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(
-            opacity: animation,
-            child: child,
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 500),
-      ),
-    );
   }
 
   void _skipCalibration() {
-    if (_isDisposed || !mounted) return;
-
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -262,7 +212,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _navigateToMainApp();
+                _navigateToClassroom();
               },
               child: const Text('Skip'),
             ),
@@ -272,78 +222,107 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
     );
   }
 
+  void _navigateToClassroom() {
+    if (_isDisposed || !mounted) return;
+    print("DEBUG: Navigating to classroom. Service status:");
+    _seesoService.debugPrintStatus();
+
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const RuangKelas(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 500),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.indigo.shade900,
-              Colors.indigo.shade600,
-              Colors.blue.shade400,
-            ],
-          ),
-        ),
+        color: Colors.white,
         child: Stack(
           children: [
-            // Main content
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  children: [
-                    // Header
-                    const SizedBox(height: 40),
-                    Icon(
-                      Icons.visibility,
-                      size: 80,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Eye Calibration',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Instructions
-                    Expanded(
-                      child: Center(
-                        child: _buildInstructions(),
-                      ),
-                    ),
-
-                    // Progress indicator
-                    if (_isCalibrating) _buildProgressIndicator(),
-
-                    const SizedBox(height: 40),
-
-                    // Action buttons
-                    if (!_isCalibrating) _buildActionButtons(),
-                  ],
-                ),
+                child: _buildMainContent(),
               ),
             ),
 
-            // Calibration points
-            if (_isCalibrating) _buildCalibrationPoints(screenSize),
+            // Gaze point indicator - DISEMBUNYIKAN di halaman kalibrasi
+            // if (_seesoService.isTracking)
+            //   Positioned(
+            //     left: _seesoService.gazeX - 5,
+            //     top: _seesoService.gazeY - 5,
+            //     child: Container(
+            //       width: 10,
+            //       height: 10,
+            //       decoration: BoxDecoration(
+            //         color: Colors.green,
+            //         shape: BoxShape.circle,
+            //         boxShadow: [
+            //           BoxShadow(
+            //             color: Colors.green.withOpacity(0.6),
+            //             blurRadius: 8,
+            //             spreadRadius: 2,
+            //           ),
+            //         ],
+            //       ),
+            //     ),
+            //   ),
 
-            // Gaze point indicator
-            if (_eyeTrackingService.isTracking)
-              GazePointWidget(
-                gazeX: _eyeTrackingService.gazeX,
-                gazeY: _eyeTrackingService.gazeY,
-                isVisible: true,
+            // Calibration point
+            if (_seesoService.isCalibrating)
+              Positioned(
+                left: _nextX - 20,
+                top: _nextY - 20,
+                child: AnimatedBuilder(
+                  animation: _pulseAnimation,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scale: _pulseAnimation.value,
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.red.shade400,
+                          border: Border.all(
+                            color: Colors.white,
+                            width: 2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 10,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              value: _calibrationProgress,
+                              backgroundColor: Colors.white.withOpacity(0.3),
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                  Colors.white),
+                              strokeWidth: 3,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
 
             // Status overlay
@@ -354,23 +333,62 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
     );
   }
 
-  Widget _buildInstructions() {
-    if (_calibrationComplete) {
-      final accuracy = _eyeTrackingService.getCalibrationAccuracy();
-      final status = _eyeTrackingService.getCalibrationStatus();
+  Widget _buildMainContent() {
+    switch (_currentStage) {
+      case AppStage.checkingPermission:
+        return _buildLoadingWidget("Checking camera permission...");
+      case AppStage.permissionDenied:
+        return _buildPermissionWidget();
+      case AppStage.initializing:
+        return _buildLoadingWidget("Initializing eye tracking...");
+      case AppStage.error:
+        return _buildErrorWidget();
+      case AppStage.initialized:
+        return _buildReadyWidget();
+      case AppStage.calibrating:
+        return _buildCalibratingWidget();
+      case AppStage.calibrationComplete:
+        return _buildCompletionWidget();
+      default:
+        return _buildLoadingWidget("Loading...");
+    }
+  }
 
-      return Column(
+  Widget _buildLoadingWidget(String message) {
+    return Center(
+      child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            accuracy >= 70 ? Icons.check_circle : Icons.warning,
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            message,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPermissionWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.camera_alt,
             size: 80,
-            color:
-                accuracy >= 70 ? Colors.green.shade400 : Colors.orange.shade400,
+            color: Colors.white70,
           ),
           const SizedBox(height: 20),
           const Text(
-            'Calibration Complete!',
+            'Camera Permission Required',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -378,264 +396,234 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 10),
-          Text(
-            'Accuracy: ${accuracy.toStringAsFixed(1)}%',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 5),
-          Text(
-            'Status: $status',
-            style: TextStyle(
-              fontSize: 16,
-              color: accuracy >= 70
-                  ? Colors.green.shade300
-                  : Colors.orange.shade300,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           const Text(
-            'Redirecting to main application...',
+            'Eye tracking requires camera access to function properly.',
             style: TextStyle(
               fontSize: 16,
-              color: Colors.white70,
+              color: Colors.black,
             ),
             textAlign: TextAlign.center,
           ),
-          if (accuracy < 70) ...[
-            const SizedBox(height: 15),
-            const Text(
-              '⚠️ Low accuracy detected. Consider recalibrating later.',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.orange,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ],
-      );
-    }
-
-    if (_isCalibrating) {
-      final currentPoint = _calibrationPoints[_currentCalibrationPoint];
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            'Look at the ${currentPoint.name} point',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 10),
-          if (_calibrationCountdown > 0)
-            Text(
-              '$_calibrationCountdown',
-              style: const TextStyle(
-                fontSize: 48,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          const SizedBox(height: 20),
-          Text(
-            'Point ${_currentCalibrationPoint + 1} of ${_calibrationPoints.length}',
-            style: const TextStyle(
-              fontSize: 16,
-              color: Colors.white70,
-            ),
-          ),
-        ],
-      );
-    }
-
-    return const Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          'Eye Tracking Calibration',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        SizedBox(height: 20),
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20),
-          child: Text(
-            'To ensure accurate eye tracking, we need to calibrate your gaze.\n\n'
-            '• Look directly at each calibration point\n'
-            '• Keep your head still during calibration\n'
-            '• Follow the points as they appear\n'
-            '• The process takes about 30 seconds',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.white70,
-              height: 1.5,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActionButtons() {
-    if (_calibrationComplete) {
-      final accuracy = _eyeTrackingService.getCalibrationAccuracy();
-
-      return Column(
-        children: [
-          if (accuracy < 70)
-            ElevatedButton(
-              onPressed: () {
-                _eyeTrackingService.resetCalibration();
-                setState(() {
-                  _calibrationComplete = false;
-                  _currentCalibrationPoint = 0;
-                });
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange.shade600,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-              ),
-              child: const Text('Recalibrate'),
-            ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 30),
           ElevatedButton(
-            onPressed: _navigateToMainApp,
+            onPressed: _initializeSeeSo,
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blue.shade600,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
             ),
-            child: const Text('Continue to App'),
+            child: const Text('Grant Permission'),
           ),
         ],
-      );
-    }
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        ElevatedButton(
-          onPressed: _skipCalibration,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey.shade600,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-          ),
-          child: const Text('Skip'),
-        ),
-        ElevatedButton(
-          onPressed: _startCalibration,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue.shade600,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-          ),
-          child: const Text('Start Calibration'),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _buildProgressIndicator() {
-    final progress = _currentCalibrationPoint / _calibrationPoints.length;
+  Widget _buildErrorWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.error,
+            size: 80,
+            color: Colors.red,
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'Initialization Failed',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _seesoService.statusMessage,
+            style: const TextStyle(
+              fontSize: 16,
+              color: Colors.white70,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 30),
+          ElevatedButton(
+            onPressed: _initializeSeeSo,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade600,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
 
+  Widget _buildReadyWidget() {
     return Column(
       children: [
-        Text(
-          'Progress: ${(_currentCalibrationPoint)}/${_calibrationPoints.length}',
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
+        const SizedBox(height: 40),
+        Icon(
+          Icons.visibility,
+          size: 80,
+          color: Color(0xFF4040D9),
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Eye Calibration',
+          style: TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  'Eye Tracking Ready',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    'To improve accuracy, we recommend calibrating your eye tracking.\n\n'
+                    '• Look directly at each calibration point\n'
+                    '• Keep your head still during calibration\n'
+                    '• The process takes about 30 seconds',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.black,
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 10),
-        LinearProgressIndicator(
-          value: progress,
-          backgroundColor: Colors.white24,
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.blue.shade400),
+        const SizedBox(height: 40),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ElevatedButton(
+              onPressed: _skipCalibration,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey.shade600,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
+              child: const Text('Skip'),
+            ),
+            ElevatedButton(
+              onPressed: _startCalibration,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade600,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
+              child: const Text('Start Calibration'),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildCalibrationPoints(Size screenSize) {
-    return Stack(
-      children: _calibrationPoints.asMap().entries.map((entry) {
-        final index = entry.key;
-        final point = entry.value;
-        final isActive = index == _currentCalibrationPoint;
-        final isCompleted = index < _currentCalibrationPoint;
+  Widget _buildCalibratingWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text(
+            'Look at the red circle',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            '${(_calibrationProgress * 100).toInt()}%',
+            style: const TextStyle(
+              fontSize: 48,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'Keep your head still and focus on the circle',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.black,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
 
-        return Positioned(
-          left: point.x * screenSize.width - 25,
-          top: point.y * screenSize.height - 25,
-          child: AnimatedBuilder(
-            animation: _pulseAnimation,
-            builder: (context, child) {
-              return Transform.scale(
-                scale: isActive ? _pulseAnimation.value : 1.0,
-                child: Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isCompleted
-                        ? Colors.green.shade400
-                        : isActive
-                            ? Colors.red.shade400
-                            : Colors.white.withOpacity(0.3),
-                    border: Border.all(
-                      color: Colors.white,
-                      width: 2,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.3),
-                        blurRadius: 10,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  child: Center(
-                    child: isCompleted
-                        ? const Icon(
-                            Icons.check,
-                            color: Colors.white,
-                            size: 24,
-                          )
-                        : Container(
-                            width: 10,
-                            height: 10,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white,
-                            ),
-                          ),
-                  ),
+  Widget _buildCompletionWidget() {
+    return AnimatedBuilder(
+      animation: _fadeAnimation,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _fadeAnimation.value,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.check_circle,
+                  size: 80,
+                  color: Colors.green.shade400,
                 ),
-              );
-            },
+                const SizedBox(height: 20),
+                const Text(
+                  'Calibration Complete!',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Redirecting to classroom...',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.black,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
           ),
         );
-      }).toList(),
+      },
     );
   }
 
@@ -653,17 +641,24 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Eye Tracking: ${_eyeTrackingService.isTracking ? "Active" : "Inactive"}',
+              'Camera: ${_seesoService.hasCameraPermission ? "GRANTED" : "DENIED"}',
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12,
+                fontSize: 10,
               ),
             ),
-            if (_eyeTrackingService.isTracking)
+            Text(
+              'Status: ${_seesoService.statusMessage}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+              ),
+            ),
+            if (_seesoService.isTracking)
               Text(
-                'Gaze: (${_eyeTrackingService.gazeX.toInt()}, ${_eyeTrackingService.gazeY.toInt()})',
+                'Gaze: (${_seesoService.gazeX.toInt()}, ${_seesoService.gazeY.toInt()})',
                 style: const TextStyle(
-                  color: Colors.white70,
+                  color: Colors.white,
                   fontSize: 10,
                 ),
               ),
@@ -674,10 +669,12 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
   }
 }
 
-class CalibrationPoint {
-  final double x;
-  final double y;
-  final String name;
-
-  CalibrationPoint(this.x, this.y, this.name);
+enum AppStage {
+  checkingPermission,
+  permissionDenied,
+  initializing,
+  initialized,
+  calibrating,
+  calibrationComplete,
+  error,
 }

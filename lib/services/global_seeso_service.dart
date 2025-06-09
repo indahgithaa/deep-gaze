@@ -1,3 +1,4 @@
+// File: lib/services/global_seeso_service.dart
 import 'package:deep_gaze/constants/app_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:seeso_flutter/event/gaze_info.dart';
@@ -7,8 +8,8 @@ import 'package:seeso_flutter/seeso.dart';
 import 'package:seeso_flutter/seeso_initialized_result.dart';
 import 'package:seeso_flutter/seeso_plugin_constants.dart';
 
-/// Global Singleton SeeSo Service
-/// Menjamin SeeSo tetap aktif dari kalibrasi hingga semua halaman
+/// Global Singleton SeeSo Service with Page Focus Management
+/// Ensures only the current active page responds to eye tracking
 class GlobalSeesoService extends ChangeNotifier {
   // Singleton instance
   static GlobalSeesoService? _instance;
@@ -41,8 +42,10 @@ class GlobalSeesoService extends ChangeNotifier {
   // Gaze tracking quality
   TrackingState _trackingState = TrackingState.FACE_MISSING;
 
-  // Listeners untuk update UI
-  final List<VoidCallback> _listeners = [];
+  // PAGE FOCUS MANAGEMENT - CRITICAL FIX
+  String? _activePageId;
+  final Map<String, VoidCallback> _pageListeners = {};
+  final Map<String, bool> _pageActiveStatus = {};
 
   // Calibration state
   bool _isCalibrating = false;
@@ -60,7 +63,6 @@ class GlobalSeesoService extends ChangeNotifier {
   bool get calibrationComplete => _calibrationComplete;
   bool get isFaceDetected => _trackingState != TrackingState.FACE_MISSING;
   bool get isTrackingStable => _trackingState == TrackingState.SUCCESS;
-
   String get trackingStatusString {
     switch (_trackingState) {
       case TrackingState.SUCCESS:
@@ -74,11 +76,66 @@ class GlobalSeesoService extends ChangeNotifier {
     }
   }
 
+  // === PAGE FOCUS MANAGEMENT METHODS ===
+
+  /// Register a page as the active listener
+  void setActivePage(String pageId, VoidCallback listener) {
+    print("DEBUG: Setting active page: $pageId (previous: $_activePageId)");
+
+    // Deactivate previous page
+    if (_activePageId != null && _activePageId != pageId) {
+      _pageActiveStatus[_activePageId!] = false;
+      print("DEBUG: Deactivated previous page: $_activePageId");
+    }
+
+    // Set new active page
+    _activePageId = pageId;
+    _pageListeners[pageId] = listener;
+    _pageActiveStatus[pageId] = true;
+
+    print("DEBUG: Active page set to: $pageId");
+    debugPageStatus();
+  }
+
+  /// Remove a page from active listening
+  void removePage(String pageId) {
+    print("DEBUG: Removing page: $pageId");
+
+    _pageListeners.remove(pageId);
+    _pageActiveStatus.remove(pageId);
+
+    // If this was the active page, clear it
+    if (_activePageId == pageId) {
+      _activePageId = null;
+      print("DEBUG: Cleared active page (was $pageId)");
+    }
+
+    debugPageStatus();
+  }
+
+  /// Check if a specific page is currently active
+  bool isPageActive(String pageId) {
+    return _activePageId == pageId && (_pageActiveStatus[pageId] ?? false);
+  }
+
+  /// Get the current active page ID
+  String? get activePageId => _activePageId;
+
+  /// Debug method to show page status
+  void debugPageStatus() {
+    print("""
+=== Page Focus Status ===
+Active Page: $_activePageId
+Registered Pages: ${_pageListeners.keys.toList()}
+Page Status: $_pageActiveStatus
+========================
+    """);
+  }
+
   // === INITIALIZATION ===
   Future<bool> initializeSeeSo() async {
     print(
         "DEBUG: initializeSeeSo() called. Already initialized: $_isInitialized");
-
     if (_isInitialized && _seesoPlugin != null) {
       print("DEBUG: SeeSo already initialized, ensuring tracking is active");
       await _ensureTrackingActive();
@@ -87,7 +144,6 @@ class GlobalSeesoService extends ChangeNotifier {
 
     try {
       print("DEBUG: Starting SeeSo initialization...");
-
       // Create SeeSo instance
       if (_seesoPlugin == null) {
         _seesoPlugin = SeeSo();
@@ -104,7 +160,6 @@ class GlobalSeesoService extends ChangeNotifier {
       if (!_hasCameraPermission) {
         throw Exception("Camera permission denied");
       }
-
       print("DEBUG: Camera permission granted");
 
       // Initialize SeeSo
@@ -122,10 +177,8 @@ class GlobalSeesoService extends ChangeNotifier {
       if (_isInitialized) {
         // Setup event listeners SEBELUM start tracking
         _setupEventListeners();
-
         // Start tracking
         await _startTracking();
-
         _statusMessage = "SeeSo initialized successfully";
       } else {
         throw Exception(_statusMessage);
@@ -144,14 +197,12 @@ class GlobalSeesoService extends ChangeNotifier {
 
   void _setupEventListeners() {
     if (_seesoPlugin == null) return;
-
     print("DEBUG: Setting up SeeSo event listeners");
 
     try {
       // PENTING: Gaze events - ini yang mengupdate gaze point
       _seesoPlugin!.getGazeEvent().listen((event) {
         GazeInfo info = GazeInfo(event);
-
         // Update gaze position - KUNCI untuk gaze point
         _gazeX = info.x;
         _gazeY = info.y;
@@ -163,14 +214,13 @@ class GlobalSeesoService extends ChangeNotifier {
           _statusMessage = "Tracking: ${info.trackingState.toString()}";
         }
 
-        // Notify semua listeners
-        _notifyAllListeners();
+        // CRITICAL: Only notify the ACTIVE page listener
+        _notifyActivePageOnly();
       });
 
       // Status events
       _seesoPlugin!.getStatusEvent().listen((event) {
         StatusInfo statusInfo = StatusInfo(event);
-
         if (statusInfo.type == StatusType.START) {
           _isTracking = true;
           _statusMessage = "Tracking Started";
@@ -180,14 +230,12 @@ class GlobalSeesoService extends ChangeNotifier {
           _statusMessage = "Tracking Stopped: ${statusInfo.stateErrorType}";
           print("DEBUG: Tracking stopped: ${statusInfo.stateErrorType}");
         }
-
-        _notifyAllListeners();
+        _notifyActivePageOnly();
       });
 
       // Calibration events
       _seesoPlugin!.getCalibrationEvent().listen((event) {
         CalibrationInfo caliInfo = CalibrationInfo(event);
-
         if (caliInfo.type == CalibrationType.CALIBRATION_NEXT_XY) {
           _isCalibrating = true;
           _calibrationComplete = false;
@@ -197,8 +245,7 @@ class GlobalSeesoService extends ChangeNotifier {
           _calibrationComplete = true;
           _statusMessage = "Calibration Complete";
           print("DEBUG: Calibration finished");
-
-          _notifyAllListeners();
+          _notifyActivePageOnly();
         }
       });
 
@@ -208,17 +255,21 @@ class GlobalSeesoService extends ChangeNotifier {
     }
   }
 
-  void _notifyAllListeners() {
-    // Notify custom listeners
-    for (var listener in _listeners) {
-      try {
-        listener();
-      } catch (e) {
-        print("DEBUG: Error calling listener: $e");
+  void _notifyActivePageOnly() {
+    // CRITICAL FIX: Only notify the currently active page
+    if (_activePageId != null && _pageActiveStatus[_activePageId] == true) {
+      final activeListener = _pageListeners[_activePageId];
+      if (activeListener != null) {
+        try {
+          activeListener();
+        } catch (e) {
+          print(
+              "DEBUG: Error calling active page listener ($_activePageId): $e");
+        }
       }
     }
 
-    // Notify ChangeNotifier listeners
+    // Also notify ChangeNotifier listeners (for widgets that use Provider/setState)
     notifyListeners();
   }
 
@@ -274,6 +325,7 @@ class GlobalSeesoService extends ChangeNotifier {
 
   Future<void> startCollectSamples() async {
     if (_seesoPlugin == null) return;
+
     try {
       await _seesoPlugin!.startCollectSamples();
     } catch (e) {
@@ -281,34 +333,37 @@ class GlobalSeesoService extends ChangeNotifier {
     }
   }
 
-  // === LISTENER MANAGEMENT ===
-  void addListener(VoidCallback listener) {
-    _listeners.add(listener);
-    print("DEBUG: Listener added. Total listeners: ${_listeners.length}");
-  }
-
-  void removeListener(VoidCallback listener) {
-    _listeners.remove(listener);
-    print("DEBUG: Listener removed. Total listeners: ${_listeners.length}");
-  }
-
-  bool get hasListeners => _listeners.isNotEmpty || super.hasListeners;
-
   // === COMPATIBILITY METHODS ===
   // Method ini untuk kompatibilitas dengan existing code
   Future<void> initialize(BuildContext context) async {
     print("DEBUG: initialize() called from UI component");
-
     if (!_isInitialized) {
       bool success = await initializeSeeSo();
       if (!success) {
         throw Exception("SeeSo initialization failed");
       }
     }
-
     // Ensure tracking is active
     await _ensureTrackingActive();
   }
+
+  // DEPRECATED: Use setActivePage instead
+  void addListener(VoidCallback listener) {
+    print("WARNING: addListener is deprecated. Use setActivePage instead.");
+    super.addListener(listener);
+  }
+
+  // DEPRECATED: Use removePage instead
+  void removeListener(VoidCallback listener) {
+    print("WARNING: removeListener is deprecated. Use removePage instead.");
+    try {
+      super.removeListener(listener);
+    } catch (e) {
+      print("DEBUG: Error removing listener: $e");
+    }
+  }
+
+  bool get hasListeners => _pageListeners.isNotEmpty || super.hasListeners;
 
   Offset getCalibratedGaze() {
     return Offset(_gazeX, _gazeY);
@@ -358,30 +413,41 @@ Tracking State: $_trackingState
 Status Message: $_statusMessage
 Calibrating: $_isCalibrating
 Calibration Complete: $_calibrationComplete
-Listeners: ${_listeners.length}
+Active Page: $_activePageId
+Page Listeners: ${_pageListeners.length}
 Gaze Position: ($_gazeX, $_gazeY)
 =================================
     """);
+  }
+
+  // Emergency cleanup for debugging
+  void clearAllPageListeners() {
+    print("DEBUG: EMERGENCY - Clearing all page listeners");
+    _pageListeners.clear();
+    _pageActiveStatus.clear();
+    _activePageId = null;
+    debugPageStatus();
   }
 
   // === CLEANUP ===
   void cleanup() {
     try {
       print("DEBUG: Cleaning up GlobalSeesoService...");
-
       if (_isTracking && _seesoPlugin != null) {
         _seesoPlugin!.stopTracking();
       }
-
       if (_isInitialized && _seesoPlugin != null) {
         _seesoPlugin!.deinitGazeTracker();
       }
 
-      _listeners.clear();
+      // Clear page management
+      _pageListeners.clear();
+      _pageActiveStatus.clear();
+      _activePageId = null;
+
       _isInitialized = false;
       _isTracking = false;
       _seesoPlugin = null;
-
       print("DEBUG: Cleanup complete");
     } catch (e) {
       print("DEBUG: Cleanup error: ${e.toString()}");

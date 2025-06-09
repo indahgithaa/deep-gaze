@@ -6,6 +6,7 @@ import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import 'quiz_page.dart';
+import 'tugas_page.dart';
 
 class SubjectDetailsPage extends StatefulWidget {
   final Subject subject;
@@ -43,9 +44,10 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
   void initState() {
     super.initState();
     print("DEBUG: SubjectDetailsPage initState");
-
     _eyeTrackingService = GlobalSeesoService();
-    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+
+    // NEW: Set this page as active
+    _eyeTrackingService.setActivePage('subject_details', _onEyeTrackingUpdate);
 
     _initializeEyeTracking();
     _initializeButtonBounds();
@@ -57,9 +59,8 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
 
-    if (_eyeTrackingService.hasListeners) {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    }
+    // NEW: Remove this page from service
+    _eyeTrackingService.removePage('subject_details');
 
     print("DEBUG: SubjectDetailsPage disposed");
     super.dispose();
@@ -202,9 +203,13 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
 
+    // NEW: Remove this page before navigation
+    _eyeTrackingService.removePage('subject_details');
+
     if (topic.type == 'Kuis' && topic.questions != null) {
       // Navigate to quiz page
-      Navigator.of(context).push(
+      Navigator.of(context)
+          .push(
         PageRouteBuilder(
           pageBuilder: (context, animation, secondaryAnimation) => QuizPage(
             subject: widget.subject,
@@ -221,9 +226,49 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
           },
           transitionDuration: const Duration(milliseconds: 300),
         ),
-      );
+      )
+          .then((_) {
+        // NEW: Re-activate when returning
+        if (!_isDisposed && mounted) {
+          print("DEBUG: Returned to SubjectDetailsPage, reactivating");
+          _eyeTrackingService.setActivePage(
+              'subject_details', _onEyeTrackingUpdate);
+        }
+      });
+    } else if (topic.type == 'Tugas') {
+      // Navigate to tugas page
+      Navigator.of(context)
+          .push(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => TugasPage(
+            subject: widget.subject,
+            topic: topic,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return SlideTransition(
+              position: animation.drive(
+                Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero),
+              ),
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 300),
+        ),
+      )
+          .then((_) {
+        // NEW: Re-activate when returning
+        if (!_isDisposed && mounted) {
+          print("DEBUG: Returned to SubjectDetailsPage, reactivating");
+          _eyeTrackingService.setActivePage(
+              'subject_details', _onEyeTrackingUpdate);
+        }
+      });
     } else {
-      // Show info for non-quiz topics
+      // Re-activate immediately for non-navigation actions
+      _eyeTrackingService.setActivePage(
+          'subject_details', _onEyeTrackingUpdate);
+
+      // Show info for other topics
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${topic.name} - ${topic.type} selected!'),

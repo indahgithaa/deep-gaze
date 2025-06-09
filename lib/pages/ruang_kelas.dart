@@ -36,12 +36,13 @@ class _RuangKelasState extends State<RuangKelas> {
   @override
   void initState() {
     super.initState();
-    print("DEBUG: RuangKelas initState - mengambil service global");
-
+    print("DEBUG: RuangKelas initState - setting as active page");
     _eyeTrackingService = GlobalSeesoService();
-    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
-    _eyeTrackingService.debugPrintStatus();
 
+    // NEW: Set this page as active instead of adding listener
+    _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
+
+    _eyeTrackingService.debugPrintStatus();
     _initializeEyeTracking();
     _initializeButtonBounds();
   }
@@ -52,11 +53,10 @@ class _RuangKelasState extends State<RuangKelas> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
 
-    if (_eyeTrackingService.hasListeners) {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    }
+    // NEW: Remove this page from service
+    _eyeTrackingService.removePage('ruang_kelas');
 
-    print("DEBUG: RuangKelas disposed, service tetap hidup");
+    print("DEBUG: RuangKelas disposed and removed from service");
     super.dispose();
   }
 
@@ -178,10 +178,13 @@ class _RuangKelasState extends State<RuangKelas> {
 
   void _navigateToSubjectDetails(Subject subject) {
     if (_isDisposed || !mounted) return;
-
     _stopDwellTimer();
 
-    Navigator.of(context).push(
+    // NEW: Temporarily deactivate this page during navigation
+    _eyeTrackingService.removePage('ruang_kelas');
+
+    Navigator.of(context)
+        .push(
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             SubjectDetailsPage(subject: subject),
@@ -195,7 +198,14 @@ class _RuangKelasState extends State<RuangKelas> {
         },
         transitionDuration: const Duration(milliseconds: 300),
       ),
-    );
+    )
+        .then((_) {
+      // NEW: Re-activate this page when returning
+      if (!_isDisposed && mounted) {
+        print("DEBUG: Returned to RuangKelas, reactivating");
+        _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
+      }
+    });
   }
 
   List<Subject> _getSubjects() {
@@ -256,7 +266,7 @@ class _RuangKelasState extends State<RuangKelas> {
       ),
       Subject(
         id: 'science',
-        name: 'Ilmu Pengetahuan Alam',
+        name: 'Biologi',
         teacher: 'Mr. Wayan Aditya',
         iconName: '⚗',
         colors: ['#2196F3', '#00BCD4'],
@@ -409,13 +419,7 @@ class _RuangKelasState extends State<RuangKelas> {
       body: Stack(
         children: [
           Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Colors.blue.shade400, Colors.purple.shade600],
-              ),
-            ),
+            color: Colors.white,
             child: SafeArea(
               child: Column(
                 children: [
@@ -491,11 +495,11 @@ class _RuangKelasState extends State<RuangKelas> {
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              'Indah Citha',
+                              'Indah Githa',
                               style: TextStyle(
                                 fontSize: 24,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                                color: Colors.black,
                               ),
                             ),
                           ],

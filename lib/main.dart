@@ -1,7 +1,7 @@
 import 'package:deep_gaze/pages/ruang_kelas.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'pages/seeso_eye_calibration_page.dart';
+import 'pages/eye_calibration_page.dart';
 
 void main() {
   runApp(const SeesoEyeTrackingApp());
@@ -52,9 +52,9 @@ class SeesoEyeTrackingApp extends StatelessWidget {
             ),
           ),
         ),
-        home: const SeesoEyeCalibrationPage(),
+        home: const EyeCalibrationPage(),
         routes: {
-          '/calibration': (context) => const SeesoEyeCalibrationPage(),
+          '/calibration': (context) => const EyeCalibrationPage(),
           '/ruang-kelas': (context) => const RuangKelas(),
         });
   }

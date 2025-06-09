@@ -42,7 +42,7 @@ class _QuizPageState extends State<QuizPage> {
   DateTime? _dwellStartTime;
 
   // Dwell time configuration - 2 seconds for quiz answers
-  static const int _dwellTimeMs = 2000;
+  static const int _dwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
 
   // Button boundaries for automatic detection
@@ -52,13 +52,13 @@ class _QuizPageState extends State<QuizPage> {
   void initState() {
     super.initState();
     print("DEBUG: QuizPage initState");
-
     _eyeTrackingService = GlobalSeesoService();
-    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+
+    // NEW: Set this page as active
+    _eyeTrackingService.setActivePage('quiz_page', _onEyeTrackingUpdate);
 
     // Initialize user answers list
     _userAnswers = List.filled(widget.questions.length, null);
-
     _initializeEyeTracking();
     _initializeButtonBounds();
   }
@@ -69,9 +69,8 @@ class _QuizPageState extends State<QuizPage> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
 
-    if (_eyeTrackingService.hasListeners) {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    }
+    // NEW: Remove this page from service
+    _eyeTrackingService.removePage('quiz_page');
 
     print("DEBUG: QuizPage disposed");
     super.dispose();
