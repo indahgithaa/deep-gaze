@@ -44,7 +44,7 @@ class _TugasPageState extends State<TugasPage> {
   String _answerText = '';
   final ScrollController _scrollController = ScrollController();
 
-  // CRITICAL FIX: Keys for getting actual widget positions
+  // Keys for getting actual widget positions
   final GlobalKey _keyboardContainerKey = GlobalKey();
   final GlobalKey _answerBoxKey = GlobalKey();
   final GlobalKey _submitButtonKey = GlobalKey();
@@ -58,7 +58,7 @@ class _TugasPageState extends State<TugasPage> {
     super.initState();
     print("DEBUG: TugasPage initState");
     _eyeTrackingService = GlobalSeesoService();
-    _eyeTrackingService.setActivePage('tugas_page', _onEyeTrackingUpdate);
+    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
     _initializeEyeTracking();
     _initializeStaticButtonBounds();
 
@@ -74,7 +74,9 @@ class _TugasPageState extends State<TugasPage> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
     _scrollController.dispose();
-    _eyeTrackingService.removePage('tugas_page');
+    if (_eyeTrackingService.hasListeners) {
+      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
+    }
     print("DEBUG: TugasPage disposed");
     super.dispose();
   }
@@ -86,7 +88,7 @@ class _TugasPageState extends State<TugasPage> {
     _buttonBounds['clear_button'] = const Rect.fromLTWH(260, 180, 100, 40);
   }
 
-  // CRITICAL FIX: Calculate actual keyboard bounds using RenderBox
+  // Calculate actual keyboard bounds using RenderBox
   void _calculateActualKeyboardBounds() {
     if (_isDisposed || !mounted) return;
 
@@ -95,15 +97,10 @@ class _TugasPageState extends State<TugasPage> {
       _updateButtonPosition('clear_button', _clearButtonKey);
       _updateButtonPosition('submit_button', _submitButtonKey);
 
-      // Calculate keyboard bounds using the callback from EyeControlledKeyboard
-      // This will be set up in the keyboard widget
       print("DEBUG: Triggering keyboard bounds calculation");
 
       // Mark bounds as calculated
       _boundsCalculated = true;
-
-      // Debug: Print all calculated bounds
-      _debugPrintBounds();
     } catch (e) {
       print("DEBUG: Error calculating bounds: $e");
     }
@@ -129,30 +126,18 @@ class _TugasPageState extends State<TugasPage> {
     }
   }
 
-  // CRITICAL FIX: Callback to receive keyboard bounds from the keyboard widget
+  // Callback to receive keyboard bounds from the keyboard widget
   void _onKeyboardBoundsCalculated(Map<String, Rect> keyboardBounds) {
     print("DEBUG: Received keyboard bounds: ${keyboardBounds.length} keys");
 
     // Update keyboard bounds
     _buttonBounds.addAll(keyboardBounds);
 
-    // Debug print all bounds
-    _debugPrintBounds();
-
     if (mounted) {
       setState(() {
         _boundsCalculated = true;
       });
     }
-  }
-
-  void _debugPrintBounds() {
-    print("=== BUTTON BOUNDS DEBUG ===");
-    _buttonBounds.forEach((key, rect) {
-      print("$key: ${rect.toString()}");
-    });
-    print("Total bounds: ${_buttonBounds.length}");
-    print("========================");
   }
 
   void _onEyeTrackingUpdate() {
@@ -448,10 +433,10 @@ class _TugasPageState extends State<TugasPage> {
                 ),
               ),
               const Spacer(),
-              // Clear button with GlobalKey for position tracking
+              // Clear button with clean styling
               Material(
                 key: _clearButtonKey,
-                elevation: isCurrentlyDwelling ? 4 : 1,
+                elevation: isCurrentlyDwelling ? 4 : 2,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding:
@@ -459,14 +444,9 @@ class _TugasPageState extends State<TugasPage> {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
                     color: isCurrentlyDwelling
-                        ? Colors.red.shade100
-                        : Colors.grey.shade100,
-                    border: Border.all(
-                      color: isCurrentlyDwelling
-                          ? Colors.red
-                          : Colors.grey.shade300,
-                      width: 1,
-                    ),
+                        ? Colors.red.shade50
+                        : Colors.grey.shade50,
+                    // REMOVED: border property to hide borders
                   ),
                   child: Stack(
                     children: [
@@ -520,6 +500,13 @@ class _TugasPageState extends State<TugasPage> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.shade200,
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Scrollbar(
               controller: _scrollController,
@@ -561,7 +548,7 @@ class _TugasPageState extends State<TugasPage> {
         width: double.infinity,
         height: 50,
         child: Material(
-          elevation: isCurrentlyDwelling ? 4 : 1,
+          elevation: isCurrentlyDwelling ? 6 : 2,
           borderRadius: BorderRadius.circular(12),
           child: Container(
             decoration: BoxDecoration(
@@ -571,10 +558,7 @@ class _TugasPageState extends State<TugasPage> {
                       ? Colors.blue.shade700
                       : Colors.blue.shade600)
                   : Colors.grey.shade300,
-              border: Border.all(
-                color: hasText ? Colors.blue.shade600 : Colors.grey.shade400,
-                width: 1,
-              ),
+              // REMOVED: border property to hide borders
             ),
             child: Stack(
               children: [
@@ -738,8 +722,7 @@ class _TugasPageState extends State<TugasPage> {
                                 onKeyPressed: _onKeyPressed,
                                 currentDwellingElement: _currentDwellingElement,
                                 dwellProgress: _dwellProgress,
-                                onBoundsCalculated:
-                                    _onKeyboardBoundsCalculated, // NEW CALLBACK
+                                onBoundsCalculated: _onKeyboardBoundsCalculated,
                               ),
                             ),
                           ),
@@ -769,54 +752,11 @@ class _TugasPageState extends State<TugasPage> {
             currentDwellingElement: _currentDwellingElement,
             dwellProgress: _dwellProgress,
           ),
-          // Debug bounds visualization (remove in production)
-          if (_boundsCalculated) _buildBoundsDebugOverlay(),
+          // REMOVED: Debug bounds visualization overlay
         ],
       ),
     );
   }
-
-  // DEBUG: Visual overlay to show calculated bounds
-  Widget _buildBoundsDebugOverlay() {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: BoundsDebugPainter(_buttonBounds),
-        ),
-      ),
-    );
-  }
 }
 
-// DEBUG: Custom painter to visualize bounds
-class BoundsDebugPainter extends CustomPainter {
-  final Map<String, Rect> bounds;
-
-  BoundsDebugPainter(this.bounds);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.red.withOpacity(0.3)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-
-    bounds.forEach((key, rect) {
-      canvas.drawRect(rect, paint);
-
-      // Draw label
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: key,
-          style: const TextStyle(color: Colors.red, fontSize: 10),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(rect.left, rect.top - 15));
-    });
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
+// REMOVED: BoundsDebugPainter class and related debug visualization

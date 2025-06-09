@@ -6,14 +6,14 @@ class EyeControlledKeyboard extends StatefulWidget {
   final Function(String) onKeyPressed;
   final String? currentDwellingElement;
   final double dwellProgress;
-  final Function(Map<String, Rect>)? onBoundsCalculated; // NEW CALLBACK
+  final Function(Map<String, Rect>)? onBoundsCalculated;
 
   const EyeControlledKeyboard({
     super.key,
     required this.onKeyPressed,
     required this.currentDwellingElement,
     required this.dwellProgress,
-    this.onBoundsCalculated, // NEW PARAMETER
+    this.onBoundsCalculated,
   });
 
   @override
@@ -23,7 +23,7 @@ class EyeControlledKeyboard extends StatefulWidget {
 class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
   bool _isDisposed = false;
 
-  // CRITICAL FIX: GlobalKeys for each key to get actual positions
+  // GlobalKeys for each key to get actual positions
   final Map<String, GlobalKey> _keyGlobalKeys = {};
   final Map<String, Rect> _calculatedBounds = {};
 
@@ -123,25 +123,29 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
     IconData? icon;
     Color keyColor;
     Color textColor;
+    Color shadowColor;
 
     switch (keyValue) {
       case 'SPACE':
         displayText = '';
         icon = Icons.space_bar;
-        keyColor = Colors.grey.shade200;
+        keyColor = Colors.grey.shade100;
         textColor = Colors.grey.shade700;
+        shadowColor = Colors.grey.shade300;
         break;
       case 'BACKSPACE':
         displayText = '';
         icon = Icons.backspace_outlined;
-        keyColor = Colors.orange.shade100;
+        keyColor = Colors.orange.shade50;
         textColor = Colors.orange.shade700;
+        shadowColor = Colors.orange.shade200;
         break;
       case 'ENTER':
         displayText = '';
         icon = Icons.keyboard_return;
-        keyColor = Colors.green.shade100;
+        keyColor = Colors.green.shade50;
         textColor = Colors.green.shade700;
+        shadowColor = Colors.green.shade200;
         break;
       default:
         displayText = keyValue;
@@ -150,50 +154,59 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
         if (RegExp(r'^[0-9]$').hasMatch(keyValue)) {
           keyColor = Colors.purple.shade50;
           textColor = Colors.purple.shade800;
+          shadowColor = Colors.purple.shade100;
         } else {
           // Regular letter
           keyColor = Colors.blue.shade50;
           textColor = Colors.blue.shade800;
+          shadowColor = Colors.blue.shade100;
         }
     }
 
+    // Enhanced styling when dwelling
     if (isCurrentlyDwelling) {
-      keyColor = keyColor == Colors.grey.shade200
-          ? Colors.grey.shade300
-          : keyColor.withOpacity(0.8);
+      keyColor = keyColor.withOpacity(0.9);
+      shadowColor = shadowColor.withOpacity(0.8);
     }
 
     return Container(
-      key: _keyGlobalKeys[
-          keyValue], // CRITICAL: Assign GlobalKey to get position
+      key: _keyGlobalKeys[keyValue], // Assign GlobalKey to get position
       width: width,
       height: height,
       child: Material(
-        elevation: isCurrentlyDwelling ? 4 : 1,
-        borderRadius: BorderRadius.circular(8),
+        elevation: isCurrentlyDwelling ? 6 : 2,
+        borderRadius: BorderRadius.circular(12),
+        shadowColor: shadowColor,
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             color: keyColor,
-            border: Border.all(
-              color: isCurrentlyDwelling
-                  ? Colors.blue.shade400
-                  : Colors.grey.shade300,
-              width: isCurrentlyDwelling ? 2 : 1,
-            ),
+            // REMOVED: border property to hide the borders
+            boxShadow: isCurrentlyDwelling
+                ? [
+                    BoxShadow(
+                      color: shadowColor.withOpacity(0.5),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
           child: Stack(
             children: [
-              // Progress indicator for dwell time
+              // Subtle progress indicator for dwell time (bottom bar)
               if (isCurrentlyDwelling)
                 Positioned(
-                  bottom: 0,
-                  left: 0,
+                  bottom: 4,
+                  left: 8,
+                  right: 8,
                   child: Container(
                     height: 3,
-                    width: width * widget.dwellProgress,
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade600,
+                    child: LinearProgressIndicator(
+                      value: widget.dwellProgress,
+                      backgroundColor: Colors.white.withOpacity(0.3),
+                      valueColor: AlwaysStoppedAnimation<Color>(textColor),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -215,19 +228,20 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
                         ),
                       ),
               ),
-              // Dwell progress indicator (circular)
+              // Subtle circular progress indicator (top-right corner)
               if (isCurrentlyDwelling)
                 Positioned(
-                  top: 4,
-                  right: 4,
+                  top: 6,
+                  right: 6,
                   child: SizedBox(
-                    width: 16,
-                    height: 16,
+                    width: 14,
+                    height: 14,
                     child: CircularProgressIndicator(
                       value: widget.dwellProgress,
                       strokeWidth: 2,
-                      backgroundColor: Colors.white.withOpacity(0.3),
-                      valueColor: AlwaysStoppedAnimation(Colors.blue.shade600),
+                      backgroundColor: Colors.white.withOpacity(0.4),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                          textColor.withOpacity(0.8)),
                     ),
                   ),
                 ),
@@ -242,20 +256,23 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
     final screenWidth = MediaQuery.of(context).size.width;
     final keyboardPadding = 20.0;
     final availableWidth = screenWidth - (keyboardPadding * 2);
-    final keySpacing = 4.0;
-    final keyHeight = 45.0;
+    final keySpacing = 6.0; // Slightly increased spacing for cleaner look
+    final keyHeight = 48.0; // Slightly increased height for better touch
 
     if (rowIndex == 4) {
-      // Special row: SPACE, BACKSPACE, ENTER
+      final spaceWidth = availableWidth * 0.48;
+      final backspaceWidth = availableWidth * 0.24;
+      final enterWidth = availableWidth * 0.24;
+
       return Padding(
         padding: EdgeInsets.symmetric(horizontal: keyboardPadding),
         child: Row(
           children: [
-            _buildKey('SPACE', availableWidth * 0.5, keyHeight),
+            _buildKey('SPACE', spaceWidth, keyHeight),
             SizedBox(width: keySpacing),
-            _buildKey('BACKSPACE', availableWidth * 0.25, keyHeight),
+            _buildKey('BACKSPACE', backspaceWidth, keyHeight),
             SizedBox(width: keySpacing),
-            _buildKey('ENTER', availableWidth * 0.25 - keySpacing, keyHeight),
+            _buildKey('ENTER', enterWidth, keyHeight),
           ],
         ),
       );
@@ -293,7 +310,7 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
         children: [
-          // Keyboard layout with proper bounds calculation
+          // Keyboard layout with cleaner design
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -302,7 +319,8 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
                 final row = entry.value;
                 return Column(
                   children: [
-                    if (rowIndex > 0) const SizedBox(height: 8),
+                    if (rowIndex > 0)
+                      const SizedBox(height: 10), // Increased spacing
                     _buildKeyboardRow(row, rowIndex),
                   ],
                 );
