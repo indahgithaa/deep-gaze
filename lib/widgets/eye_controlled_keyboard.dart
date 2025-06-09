@@ -181,7 +181,6 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             color: keyColor,
-            // REMOVED: border property to hide the borders
             boxShadow: isCurrentlyDwelling
                 ? [
                     BoxShadow(
@@ -217,12 +216,13 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
                     ? Icon(
                         icon,
                         color: textColor,
-                        size: keyValue == 'SPACE' ? 24 : 20,
+                        size:
+                            keyValue == 'SPACE' ? 20 : 16, // Reduced icon sizes
                       )
                     : Text(
                         displayText,
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 14, // Reduced font size
                           fontWeight: FontWeight.w600,
                           color: textColor,
                         ),
@@ -231,11 +231,11 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
               // Subtle circular progress indicator (top-right corner)
               if (isCurrentlyDwelling)
                 Positioned(
-                  top: 6,
-                  right: 6,
+                  top: 4,
+                  right: 4,
                   child: SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 12,
+                    height: 12,
                     child: CircularProgressIndicator(
                       value: widget.dwellProgress,
                       strokeWidth: 2,
@@ -252,12 +252,18 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
     );
   }
 
-  Widget _buildKeyboardRow(List<String> row, int rowIndex) {
+  Widget _buildKeyboardRow(
+      List<String> row, int rowIndex, double availableHeight) {
     final screenWidth = MediaQuery.of(context).size.width;
     final keyboardPadding = 20.0;
     final availableWidth = screenWidth - (keyboardPadding * 2);
-    final keySpacing = 6.0; // Slightly increased spacing for cleaner look
-    final keyHeight = 48.0; // Slightly increased height for better touch
+    final keySpacing = 4.0; // Reduced spacing
+
+    // Calculate key height based on available space
+    final totalRows = _keyboardLayout.length;
+    final totalVerticalSpacing = (totalRows - 1) * 6.0; // 6px between rows
+    final keyHeight = (availableHeight - totalVerticalSpacing) / totalRows;
+    final clampedKeyHeight = keyHeight.clamp(32.0, 44.0); // Min 32px, max 44px
 
     if (rowIndex == 4) {
       final spaceWidth = availableWidth * 0.48;
@@ -268,11 +274,11 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
         padding: EdgeInsets.symmetric(horizontal: keyboardPadding),
         child: Row(
           children: [
-            _buildKey('SPACE', spaceWidth, keyHeight),
+            _buildKey('SPACE', spaceWidth, clampedKeyHeight),
             SizedBox(width: keySpacing),
-            _buildKey('BACKSPACE', backspaceWidth, keyHeight),
+            _buildKey('BACKSPACE', backspaceWidth, clampedKeyHeight),
             SizedBox(width: keySpacing),
-            _buildKey('ENTER', enterWidth, keyHeight),
+            _buildKey('ENTER', enterWidth, clampedKeyHeight),
           ],
         ),
       );
@@ -295,7 +301,7 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
             return Row(
               children: [
                 if (index > 0) SizedBox(width: keySpacing),
-                _buildKey(key, keyWidth, keyHeight),
+                _buildKey(key, keyWidth, clampedKeyHeight),
               ],
             );
           }).toList(),
@@ -306,29 +312,41 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      child: Column(
-        children: [
-          // Keyboard layout with cleaner design
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: _keyboardLayout.asMap().entries.map((entry) {
-                final rowIndex = entry.key;
-                final row = entry.value;
-                return Column(
-                  children: [
-                    if (rowIndex > 0)
-                      const SizedBox(height: 10), // Increased spacing
-                    _buildKeyboardRow(row, rowIndex),
-                  ],
-                );
-              }).toList(),
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Use available height from constraints
+        final availableHeight =
+            constraints.maxHeight - 40; // Account for container padding
+
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min, // Important: Use min instead of max
+            children: [
+              // Keyboard layout with responsive sizing
+              Flexible(
+                // Changed from Expanded to Flexible
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min, // Important: Use min size
+                  children: _keyboardLayout.asMap().entries.map((entry) {
+                    final rowIndex = entry.key;
+                    final row = entry.value;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (rowIndex > 0)
+                          const SizedBox(height: 6), // Reduced spacing
+                        _buildKeyboardRow(row, rowIndex, availableHeight),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
