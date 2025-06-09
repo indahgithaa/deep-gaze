@@ -6,12 +6,14 @@ class EyeControlledKeyboard extends StatefulWidget {
   final Function(String) onKeyPressed;
   final String? currentDwellingElement;
   final double dwellProgress;
+  final Function(Map<String, Rect>)? onBoundsCalculated; // NEW CALLBACK
 
   const EyeControlledKeyboard({
     super.key,
     required this.onKeyPressed,
     required this.currentDwellingElement,
     required this.dwellProgress,
+    this.onBoundsCalculated, // NEW PARAMETER
   });
 
   @override
@@ -20,6 +22,11 @@ class EyeControlledKeyboard extends StatefulWidget {
 
 class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
   bool _isDisposed = false;
+
+  // CRITICAL FIX: GlobalKeys for each key to get actual positions
+  final Map<String, GlobalKey> _keyGlobalKeys = {};
+  final Map<String, Rect> _calculatedBounds = {};
+
   // Keyboard layout configuration
   final List<List<String>> _keyboardLayout = [
     ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
@@ -32,17 +39,78 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
   @override
   void initState() {
     super.initState();
-    // REMOVED: eye tracking listener - parent handles this
-    // Initialize key bounds after first frame
+
+    // Initialize GlobalKeys for all keys
+    _initializeKeyGlobalKeys();
+
+    // Calculate bounds after the widget tree is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Any initialization if needed
+      _calculateAndNotifyBounds();
     });
+  }
+
+  void _initializeKeyGlobalKeys() {
+    for (final row in _keyboardLayout) {
+      for (final key in row) {
+        _keyGlobalKeys[key] = GlobalKey();
+      }
+    }
+    print(
+        "DEBUG: Initialized ${_keyGlobalKeys.length} GlobalKeys for keyboard");
+  }
+
+  void _calculateAndNotifyBounds() {
+    if (_isDisposed || !mounted) return;
+
+    try {
+      _calculatedBounds.clear();
+      int successfulCalculations = 0;
+
+      // Calculate bounds for each key using its GlobalKey
+      _keyGlobalKeys.forEach((keyValue, globalKey) {
+        try {
+          final RenderBox? renderBox =
+              globalKey.currentContext?.findRenderObject() as RenderBox?;
+          if (renderBox != null) {
+            final position = renderBox.localToGlobal(Offset.zero);
+            final size = renderBox.size;
+
+            final rect = Rect.fromLTWH(
+              position.dx,
+              position.dy,
+              size.width,
+              size.height,
+            );
+
+            _calculatedBounds['key_$keyValue'] = rect;
+            successfulCalculations++;
+
+            print("DEBUG: Calculated bounds for key '$keyValue': $rect");
+          } else {
+            print("WARNING: Could not get RenderBox for key '$keyValue'");
+          }
+        } catch (e) {
+          print("ERROR: Failed to calculate bounds for key '$keyValue': $e");
+        }
+      });
+
+      print(
+          "DEBUG: Successfully calculated $successfulCalculations/${_keyGlobalKeys.length} key bounds");
+
+      // Notify parent with calculated bounds
+      if (widget.onBoundsCalculated != null && _calculatedBounds.isNotEmpty) {
+        widget.onBoundsCalculated!(_calculatedBounds);
+        print(
+            "DEBUG: Notified parent with ${_calculatedBounds.length} keyboard bounds");
+      }
+    } catch (e) {
+      print("ERROR: Failed to calculate keyboard bounds: $e");
+    }
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    // REMOVED: eye tracking listener removal - parent handles this
     super.dispose();
   }
 
@@ -96,6 +164,8 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
     }
 
     return Container(
+      key: _keyGlobalKeys[
+          keyValue], // CRITICAL: Assign GlobalKey to get position
       width: width,
       height: height,
       child: Material(
@@ -157,8 +227,7 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
                       value: widget.dwellProgress,
                       strokeWidth: 2,
                       backgroundColor: Colors.white.withOpacity(0.3),
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(Colors.blue.shade600),
+                      valueColor: AlwaysStoppedAnimation(Colors.blue.shade600),
                     ),
                   ),
                 ),
@@ -177,7 +246,7 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
     final keyHeight = 45.0;
 
     if (rowIndex == 4) {
-      // Special row: SPACE, BACKSPACE, ENTER (now row 4)
+      // Special row: SPACE, BACKSPACE, ENTER
       return Padding(
         padding: EdgeInsets.symmetric(horizontal: keyboardPadding),
         child: Row(
@@ -191,7 +260,7 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
         ),
       );
     } else {
-      // Regular rows (including the new number row)
+      // Regular rows (including the number row)
       final maxKeysPerRow = 10;
       final keyWidth =
           (availableWidth - (keySpacing * (maxKeysPerRow - 1))) / maxKeysPerRow;
@@ -206,7 +275,6 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
           children: row.asMap().entries.map((entry) {
             final index = entry.key;
             final key = entry.value;
-
             return Row(
               children: [
                 if (index > 0) SizedBox(width: keySpacing),
@@ -225,14 +293,13 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
         children: [
-          // Keyboard layout
+          // Keyboard layout with proper bounds calculation
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: _keyboardLayout.asMap().entries.map((entry) {
                 final rowIndex = entry.key;
                 final row = entry.value;
-
                 return Column(
                   children: [
                     if (rowIndex > 0) const SizedBox(height: 8),
@@ -245,5 +312,12 @@ class _EyeControlledKeyboardState extends State<EyeControlledKeyboard> {
         ],
       ),
     );
+  }
+
+  // Public method to manually trigger bounds recalculation (if needed)
+  void recalculateBounds() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _calculateAndNotifyBounds();
+    });
   }
 }

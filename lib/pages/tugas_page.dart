@@ -35,8 +35,7 @@ class _TugasPageState extends State<TugasPage> {
   // Dwell time configuration - 600ms for keyboard, 1.5s for other buttons
   static const int _keyboardDwellTimeMs = 600;
   static const int _buttonDwellTimeMs = 1500;
-  static const int _dwellUpdateIntervalMs =
-      100; // Increased from 50ms to reduce lag
+  static const int _dwellUpdateIntervalMs = 100;
 
   // Button boundaries for automatic detection
   final Map<String, Rect> _buttonBounds = {};
@@ -45,21 +44,27 @@ class _TugasPageState extends State<TugasPage> {
   String _answerText = '';
   final ScrollController _scrollController = ScrollController();
 
+  // CRITICAL FIX: Keys for getting actual widget positions
+  final GlobalKey _keyboardContainerKey = GlobalKey();
+  final GlobalKey _answerBoxKey = GlobalKey();
+  final GlobalKey _submitButtonKey = GlobalKey();
+  final GlobalKey _clearButtonKey = GlobalKey();
+
+  // Flag to track if bounds have been calculated
+  bool _boundsCalculated = false;
+
   @override
   void initState() {
     super.initState();
     print("DEBUG: TugasPage initState");
     _eyeTrackingService = GlobalSeesoService();
-
-    // NEW: Set this page as active
     _eyeTrackingService.setActivePage('tugas_page', _onEyeTrackingUpdate);
-
     _initializeEyeTracking();
-    _initializeButtonBounds();
+    _initializeStaticButtonBounds();
 
-    // Initialize keyboard bounds after first frame
+    // Calculate keyboard bounds after the widget tree is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeKeyboardBounds();
+      _calculateActualKeyboardBounds();
     });
   }
 
@@ -69,126 +74,96 @@ class _TugasPageState extends State<TugasPage> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
     _scrollController.dispose();
-
-    // NEW: Remove this page from service
     _eyeTrackingService.removePage('tugas_page');
-
     print("DEBUG: TugasPage disposed");
     super.dispose();
   }
 
-  void _initializeButtonBounds() {
-    // Back button boundary
+  void _initializeStaticButtonBounds() {
+    // Initialize non-keyboard button bounds (these will be updated with actual positions)
     _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
-
-    // Submit button boundary
     _buttonBounds['submit_button'] = const Rect.fromLTWH(50, 700, 300, 60);
-
-    // Clear button boundary
     _buttonBounds['clear_button'] = const Rect.fromLTWH(260, 180, 100, 40);
-
-    // Initialize keyboard key bounds after first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeKeyboardBounds();
-    });
   }
 
-  void _initializeKeyboardBounds() {
-    if (_isDisposed || !mounted) {
-      print(
-          "DEBUG: TugasPage - Cannot initialize keyboard bounds, page disposed or not mounted");
-      return;
-    }
+  // CRITICAL FIX: Calculate actual keyboard bounds using RenderBox
+  void _calculateActualKeyboardBounds() {
+    if (_isDisposed || !mounted) return;
 
     try {
-      final screenWidth = MediaQuery.of(context).size.width;
-      final keyboardPadding = 20.0;
-      final availableWidth = screenWidth - (keyboardPadding * 2);
+      // Update actual positions for static buttons
+      _updateButtonPosition('clear_button', _clearButtonKey);
+      _updateButtonPosition('submit_button', _submitButtonKey);
 
-      // Keyboard layout
-      final List<List<String>> keyboardLayout = [
-        ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-        ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-        ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-        ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
-        ['SPACE', 'BACKSPACE', 'ENTER']
-      ];
+      // Calculate keyboard bounds using the callback from EyeControlledKeyboard
+      // This will be set up in the keyboard widget
+      print("DEBUG: Triggering keyboard bounds calculation");
 
-      // Calculate key dimensions
-      final maxKeysPerRow = 10;
-      final keySpacing = 4.0;
-      final keyWidth =
-          (availableWidth - (keySpacing * (maxKeysPerRow - 1))) / maxKeysPerRow;
-      final keyHeight = 45.0;
-      final rowSpacing = 8.0;
+      // Mark bounds as calculated
+      _boundsCalculated = true;
 
-      // Starting Y position for keyboard - adjusted for layout
-      double startY = 420.0; // Moved down to account for answer box
-
-      for (int rowIndex = 0; rowIndex < keyboardLayout.length; rowIndex++) {
-        final row = keyboardLayout[rowIndex];
-        final rowY = startY + (rowIndex * (keyHeight + rowSpacing));
-
-        // Calculate row width and starting X
-        double rowWidth;
-        if (rowIndex == 4) {
-          // Special row with SPACE, BACKSPACE, ENTER
-          rowWidth = availableWidth;
-        } else {
-          rowWidth = (row.length * keyWidth) + ((row.length - 1) * keySpacing);
-        }
-
-        final startX = keyboardPadding + (availableWidth - rowWidth) / 2;
-
-        for (int keyIndex = 0; keyIndex < row.length; keyIndex++) {
-          final key = row[keyIndex];
-          double keyX, currentKeyWidth;
-
-          if (rowIndex == 4) {
-            // Special row
-            if (key == 'SPACE') {
-              currentKeyWidth = availableWidth * 0.5;
-              keyX = startX;
-            } else if (key == 'BACKSPACE') {
-              currentKeyWidth = availableWidth * 0.25;
-              keyX = startX + (availableWidth * 0.5) + keySpacing;
-            } else {
-              // ENTER
-              currentKeyWidth = availableWidth * 0.25 - keySpacing;
-              keyX = startX + (availableWidth * 0.75) + keySpacing;
-            }
-          } else {
-            currentKeyWidth = keyWidth;
-            keyX = startX + (keyIndex * (keyWidth + keySpacing));
-          }
-
-          _buttonBounds['key_$key'] =
-              Rect.fromLTWH(keyX, rowY, currentKeyWidth, keyHeight);
-        }
-      }
-
-      print(
-          "DEBUG: TugasPage - Initialized ${_buttonBounds.length} button bounds including keyboard");
+      // Debug: Print all calculated bounds
+      _debugPrintBounds();
     } catch (e) {
-      print("DEBUG: Error initializing keyboard bounds: $e");
+      print("DEBUG: Error calculating bounds: $e");
     }
+  }
+
+  void _updateButtonPosition(String buttonId, GlobalKey key) {
+    try {
+      final RenderBox? renderBox =
+          key.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox != null) {
+        final position = renderBox.localToGlobal(Offset.zero);
+        final size = renderBox.size;
+        _buttonBounds[buttonId] = Rect.fromLTWH(
+          position.dx,
+          position.dy,
+          size.width,
+          size.height,
+        );
+        print("DEBUG: Updated $buttonId bounds: ${_buttonBounds[buttonId]}");
+      }
+    } catch (e) {
+      print("DEBUG: Error updating $buttonId position: $e");
+    }
+  }
+
+  // CRITICAL FIX: Callback to receive keyboard bounds from the keyboard widget
+  void _onKeyboardBoundsCalculated(Map<String, Rect> keyboardBounds) {
+    print("DEBUG: Received keyboard bounds: ${keyboardBounds.length} keys");
+
+    // Update keyboard bounds
+    _buttonBounds.addAll(keyboardBounds);
+
+    // Debug print all bounds
+    _debugPrintBounds();
+
+    if (mounted) {
+      setState(() {
+        _boundsCalculated = true;
+      });
+    }
+  }
+
+  void _debugPrintBounds() {
+    print("=== BUTTON BOUNDS DEBUG ===");
+    _buttonBounds.forEach((key, rect) {
+      print("$key: ${rect.toString()}");
+    });
+    print("Total bounds: ${_buttonBounds.length}");
+    print("========================");
   }
 
   void _onEyeTrackingUpdate() {
-    if (_isDisposed || !mounted) {
-      print("DEBUG: TugasPage - skipping update, disposed or not mounted");
-      return;
-    }
+    if (_isDisposed || !mounted || !_boundsCalculated) return;
 
-    // Check if eye tracking is actually working
-    if (!_eyeTrackingService.isTracking) {
-      return;
-    }
+    if (!_eyeTrackingService.isTracking) return;
 
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    // Quick bounds check to avoid unnecessary processing
+    // Quick bounds check
     if (currentGazePoint.dx < 0 ||
         currentGazePoint.dy < 0 ||
         currentGazePoint.dx > MediaQuery.of(context).size.width ||
@@ -209,7 +184,8 @@ class _TugasPageState extends State<TugasPage> {
     // Only process if hover state changed
     if (hoveredElement != _currentDwellingElement) {
       if (hoveredElement != null) {
-        print("DEBUG: TugasPage - Started dwelling on: $hoveredElement");
+        print(
+            "DEBUG: TugasPage - Started dwelling on: $hoveredElement at gaze point: $currentGazePoint");
         _handleElementHover(hoveredElement);
       } else if (_currentDwellingElement != null) {
         print(
@@ -221,9 +197,7 @@ class _TugasPageState extends State<TugasPage> {
 
   void _handleElementHover(String elementId) {
     VoidCallback action;
-    int dwellTime = _buttonDwellTimeMs; // Default to button dwell time
-
-    print("DEBUG: Handling element hover: $elementId");
+    int dwellTime = _buttonDwellTimeMs;
 
     if (elementId == 'back_button') {
       action = _goBack;
@@ -232,11 +206,9 @@ class _TugasPageState extends State<TugasPage> {
     } else if (elementId == 'clear_button') {
       action = _clearText;
     } else if (elementId.startsWith('key_')) {
-      // Handle keyboard keys
-      final keyValue = elementId.substring(4); // Remove 'key_' prefix
-      print("DEBUG: Setting up keyboard key action for: '$keyValue'");
+      final keyValue = elementId.substring(4);
       action = () => _onKeyPressed(keyValue);
-      dwellTime = _keyboardDwellTimeMs; // Use keyboard dwell time
+      dwellTime = _keyboardDwellTimeMs;
     } else {
       print("DEBUG: Unknown element: $elementId");
       return;
@@ -273,8 +245,6 @@ class _TugasPageState extends State<TugasPage> {
     if (_currentDwellingElement == elementId) return;
 
     _stopDwellTimer();
-
-    print("DEBUG: Starting dwell timer for $elementId with ${dwellTimeMs}ms");
 
     if (mounted && !_isDisposed) {
       setState(() {
@@ -327,25 +297,12 @@ class _TugasPageState extends State<TugasPage> {
 
   void _goBack() {
     if (_isDisposed || !mounted) return;
-
-    print("DEBUG: TugasPage - Going back, cleaning up...");
     _stopDwellTimer();
-
-    // Ensure proper cleanup before navigation
-    _isDisposed = true;
-    try {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    } catch (e) {
-      print("DEBUG: Error during back navigation cleanup: $e");
-    }
-
     Navigator.of(context).pop();
   }
 
   void _onKeyPressed(String key) {
     if (_isDisposed || !mounted) return;
-
-    print("DEBUG: Key pressed: '$key'");
 
     setState(() {
       if (key == 'BACKSPACE') {
@@ -360,8 +317,6 @@ class _TugasPageState extends State<TugasPage> {
         _answerText += key;
       }
     });
-
-    print("DEBUG: Answer text now: '$_answerText'");
 
     // Auto scroll to bottom
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -389,11 +344,9 @@ class _TugasPageState extends State<TugasPage> {
   void _clearText() {
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
-
     setState(() {
       _answerText = '';
     });
-
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Text cleared'),
@@ -418,7 +371,6 @@ class _TugasPageState extends State<TugasPage> {
       return;
     }
 
-    // Show submission dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -442,9 +394,7 @@ class _TugasPageState extends State<TugasPage> {
                   child: Text(
                     _answerText,
                     style: const TextStyle(
-                      fontStyle: FontStyle.italic,
-                      fontSize: 14,
-                    ),
+                        fontStyle: FontStyle.italic, fontSize: 14),
                   ),
                 ),
               ),
@@ -458,15 +408,14 @@ class _TugasPageState extends State<TugasPage> {
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                Navigator.of(context).pop(); // Go back to subject details
+                Navigator.of(context).pop();
+                Navigator.of(context).pop();
               },
               child: const Text('Back to Topics'),
             ),
             TextButton(
               onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                // Reset assignment
+                Navigator.of(context).pop();
                 setState(() {
                   _answerText = '';
                 });
@@ -483,6 +432,7 @@ class _TugasPageState extends State<TugasPage> {
     final isCurrentlyDwelling = _currentDwellingElement == 'clear_button';
 
     return Container(
+      key: _answerBoxKey,
       margin: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -498,8 +448,9 @@ class _TugasPageState extends State<TugasPage> {
                 ),
               ),
               const Spacer(),
-              // Clear button
+              // Clear button with GlobalKey for position tracking
               Material(
+                key: _clearButtonKey,
                 elevation: isCurrentlyDwelling ? 4 : 1,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
@@ -592,10 +543,7 @@ class _TugasPageState extends State<TugasPage> {
           const SizedBox(height: 8),
           Text(
             'Words: ${_answerText.trim().isEmpty ? 0 : _answerText.trim().split(RegExp(r'\s+')).length} | Characters: ${_answerText.length}',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -609,6 +557,7 @@ class _TugasPageState extends State<TugasPage> {
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Container(
+        key: _submitButtonKey,
         width: double.infinity,
         height: 50,
         child: Material(
@@ -728,7 +677,6 @@ class _TugasPageState extends State<TugasPage> {
                       ],
                     ),
                   ),
-
                   // Topic info
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -739,11 +687,8 @@ class _TugasPageState extends State<TugasPage> {
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          Icons.assignment,
-                          color: Colors.white,
-                          size: 24,
-                        ),
+                        const Icon(Icons.assignment,
+                            color: Colors.white, size: 24),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -770,9 +715,7 @@ class _TugasPageState extends State<TugasPage> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 20),
-
                   // Main content area
                   Expanded(
                     child: Container(
@@ -787,16 +730,19 @@ class _TugasPageState extends State<TugasPage> {
                         children: [
                           // Answer input box
                           _buildAnswerBox(),
-
-                          // Eye-controlled keyboard
+                          // Eye-controlled keyboard with bounds callback
                           Expanded(
-                            child: EyeControlledKeyboard(
-                              onKeyPressed: _onKeyPressed,
-                              currentDwellingElement: _currentDwellingElement,
-                              dwellProgress: _dwellProgress,
+                            child: Container(
+                              key: _keyboardContainerKey,
+                              child: EyeControlledKeyboard(
+                                onKeyPressed: _onKeyPressed,
+                                currentDwellingElement: _currentDwellingElement,
+                                dwellProgress: _dwellProgress,
+                                onBoundsCalculated:
+                                    _onKeyboardBoundsCalculated, // NEW CALLBACK
+                              ),
                             ),
                           ),
-
                           // Submit button
                           _buildSubmitButton(),
                         ],
@@ -807,14 +753,12 @@ class _TugasPageState extends State<TugasPage> {
               ),
             ),
           ),
-
           // Gaze point indicator
           GazePointWidget(
             gazeX: _eyeTrackingService.gazeX,
             gazeY: _eyeTrackingService.gazeY,
             isVisible: _eyeTrackingService.isTracking,
           ),
-
           // Status information
           StatusInfoWidget(
             statusMessage: _eyeTrackingService.statusMessage,
@@ -825,8 +769,54 @@ class _TugasPageState extends State<TugasPage> {
             currentDwellingElement: _currentDwellingElement,
             dwellProgress: _dwellProgress,
           ),
+          // Debug bounds visualization (remove in production)
+          if (_boundsCalculated) _buildBoundsDebugOverlay(),
         ],
       ),
     );
   }
+
+  // DEBUG: Visual overlay to show calculated bounds
+  Widget _buildBoundsDebugOverlay() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: CustomPaint(
+          painter: BoundsDebugPainter(_buttonBounds),
+        ),
+      ),
+    );
+  }
+}
+
+// DEBUG: Custom painter to visualize bounds
+class BoundsDebugPainter extends CustomPainter {
+  final Map<String, Rect> bounds;
+
+  BoundsDebugPainter(this.bounds);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.red.withOpacity(0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    bounds.forEach((key, rect) {
+      canvas.drawRect(rect, paint);
+
+      // Draw label
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: key,
+          style: const TextStyle(color: Colors.red, fontSize: 10),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(rect.left, rect.top - 15));
+    });
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

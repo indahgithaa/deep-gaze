@@ -1,3 +1,4 @@
+// File: lib/pages/subject_details_page.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/subject.dart';
@@ -7,6 +8,7 @@ import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import 'quiz_page.dart';
 import 'tugas_page.dart';
+import 'material_reader_page.dart'; // NEW IMPORT
 
 class SubjectDetailsPage extends StatefulWidget {
   final Subject subject;
@@ -45,10 +47,7 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     super.initState();
     print("DEBUG: SubjectDetailsPage initState");
     _eyeTrackingService = GlobalSeesoService();
-
-    // NEW: Set this page as active
-    _eyeTrackingService.setActivePage('subject_details', _onEyeTrackingUpdate);
-
+    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
     _initializeEyeTracking();
     _initializeButtonBounds();
   }
@@ -58,10 +57,9 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     _isDisposed = true;
     _dwellTimer?.cancel();
     _dwellTimer = null;
-
-    // NEW: Remove this page from service
-    _eyeTrackingService.removePage('subject_details');
-
+    if (_eyeTrackingService.hasListeners) {
+      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
+    }
     print("DEBUG: SubjectDetailsPage disposed");
     super.dispose();
   }
@@ -73,7 +71,6 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
       _buttonBounds[widget.subject.topics[i].id] =
           Rect.fromLTWH(20, 300 + (i * 80), 350, 70);
     }
-
     // Back button boundary
     _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
   }
@@ -199,12 +196,13 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     Navigator.of(context).pop();
   }
 
+  // UPDATED: Complete topic selection handling for all types
   void _handleTopicSelection(Topic topic) {
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
 
-    // NEW: Remove this page before navigation
-    _eyeTrackingService.removePage('subject_details');
+    // Clean up listeners before navigation to prevent conflicts
+    _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
 
     if (topic.type == 'Kuis' && topic.questions != null) {
       // Navigate to quiz page
@@ -228,15 +226,13 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         ),
       )
           .then((_) {
-        // NEW: Re-activate when returning
+        // Re-add listener when returning from quiz
         if (!_isDisposed && mounted) {
-          print("DEBUG: Returned to SubjectDetailsPage, reactivating");
-          _eyeTrackingService.setActivePage(
-              'subject_details', _onEyeTrackingUpdate);
+          _eyeTrackingService.addListener(_onEyeTrackingUpdate);
         }
       });
     } else if (topic.type == 'Tugas') {
-      // Navigate to tugas page
+      // Navigate to tugas (assignment) page with eye-controlled keyboard
       Navigator.of(context)
           .push(
         PageRouteBuilder(
@@ -256,26 +252,53 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         ),
       )
           .then((_) {
-        // NEW: Re-activate when returning
+        // Re-add listener when returning from tugas
         if (!_isDisposed && mounted) {
-          print("DEBUG: Returned to SubjectDetailsPage, reactivating");
-          _eyeTrackingService.setActivePage(
-              'subject_details', _onEyeTrackingUpdate);
+          _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+        }
+      });
+    } else if (topic.type == 'Materi') {
+      // Navigate to material reader page with eye-controlled navigation
+      Navigator.of(context)
+          .push(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              MaterialReaderPage(
+            subject: widget.subject,
+            topic: topic,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return SlideTransition(
+              position: animation.drive(
+                Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero),
+              ),
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 300),
+        ),
+      )
+          .then((_) {
+        // Re-add listener when returning from material reader
+        if (!_isDisposed && mounted) {
+          _eyeTrackingService.addListener(_onEyeTrackingUpdate);
         }
       });
     } else {
-      // Re-activate immediately for non-navigation actions
-      _eyeTrackingService.setActivePage(
-          'subject_details', _onEyeTrackingUpdate);
-
-      // Show info for other topics
+      // Handle unknown topic types or show info
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${topic.name} - ${topic.type} selected!'),
+          content:
+              Text('${topic.name} - ${topic.type} will be available soon!'),
           duration: const Duration(seconds: 2),
           backgroundColor: topic.isCompleted ? Colors.green : Colors.blue,
         ),
       );
+
+      // Re-add listener immediately since we're not navigating
+      if (!_isDisposed && mounted) {
+        _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+      }
     }
   }
 
@@ -294,7 +317,6 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
 
   Widget _buildTopicCard(Topic topic, int index) {
     final isCurrentlyDwelling = _currentDwellingElement == topic.id;
-
     IconData iconData;
     Color iconColor;
 
@@ -305,15 +327,15 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         break;
       case 'Materi':
         iconData = Icons.book;
-        iconColor = Colors.blue;
+        iconColor = Colors.green; // Changed to green for better distinction
         break;
       case 'Kuis':
         iconData = Icons.quiz;
-        iconColor = Colors.blue;
+        iconColor = Colors.purple; // Changed to purple for better distinction
         break;
       default:
         iconData = Icons.circle;
-        iconColor = Colors.blue;
+        iconColor = Colors.grey;
     }
 
     return Container(
@@ -327,7 +349,7 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
             borderRadius: BorderRadius.circular(15),
             color: Colors.white,
             border: isCurrentlyDwelling
-                ? Border.all(color: Colors.blue, width: 2)
+                ? Border.all(color: iconColor, width: 2)
                 : Border.all(color: Colors.grey.shade300, width: 1),
           ),
           child: Stack(
@@ -342,12 +364,11 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
                     width: (MediaQuery.of(context).size.width - 80) *
                         _dwellProgress,
                     decoration: BoxDecoration(
-                      color: Colors.blue,
+                      color: iconColor,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                 ),
-
               // Topic content
               Row(
                 children: [
@@ -378,29 +399,89 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          topic.type,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: iconColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: iconColor.withOpacity(0.3),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                topic.type,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: iconColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            if (topic.type == 'Materi') ...[
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.remove_red_eye,
+                                size: 16,
+                                color: Colors.green.shade600,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Eye Control',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.green.shade600,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ],
                     ),
                   ),
-                  if (topic.isCompleted)
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
-                        shape: BoxShape.circle,
+                  Column(
+                    children: [
+                      if (topic.isCompleted)
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.check,
+                            color: Colors.green,
+                            size: 20,
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      // Type-specific action hint
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: iconColor.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _getActionHint(topic.type),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: iconColor,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ),
-                      child: const Icon(
-                        Icons.check,
-                        color: Colors.green,
-                        size: 20,
-                      ),
-                    ),
+                    ],
+                  ),
                 ],
               ),
             ],
@@ -408,6 +489,19 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         ),
       ),
     );
+  }
+
+  String _getActionHint(String topicType) {
+    switch (topicType) {
+      case 'Materi':
+        return 'Read';
+      case 'Tugas':
+        return 'Type';
+      case 'Kuis':
+        return 'Answer';
+      default:
+        return 'Open';
+    }
   }
 
   @override
@@ -533,7 +627,6 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
                       ],
                     ),
                   ),
-
                   // Tabs
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -576,8 +669,7 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
                       }).toList(),
                     ),
                   ),
-
-                  // Topics list
+                  // Enhanced topics list with better visual indicators
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -591,14 +683,12 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
               ),
             ),
           ),
-
           // Gaze point indicator
           GazePointWidget(
             gazeX: _eyeTrackingService.gazeX,
             gazeY: _eyeTrackingService.gazeY,
             isVisible: _eyeTrackingService.isTracking,
           ),
-
           // Status information
           StatusInfoWidget(
             statusMessage: _eyeTrackingService.statusMessage,
