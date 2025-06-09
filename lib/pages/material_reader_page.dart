@@ -48,17 +48,18 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
   // Auto-scroll configuration
   Timer? _autoScrollTimer;
   static const Duration _autoScrollSpeed = Duration(milliseconds: 50);
-  static const double _scrollIncrement = 2.0;
+  static const double _scrollIncrement = 150.0;
 
-  // Navigation zones - REDUCED SIZE
-  final double _navigationZoneHeight = 60.0; // Reduced from 100 to 60
+  // FIXED: Navigation zones with proper height calculation
+  final double _navigationZoneHeight = 80.0; // Increased from 60 to 80
+  final double _bottomNavigationHeight = 80.0; // Height of bottom nav bar
 
   @override
   void initState() {
     super.initState();
     print("DEBUG: MaterialReaderPage initState");
     _eyeTrackingService = GlobalSeesoService();
-    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+    _eyeTrackingService.setActivePage('material_reader', _onEyeTrackingUpdate);
     _initializeEyeTracking();
 
     // Initialize button bounds after the first frame
@@ -75,9 +76,9 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
     _scrollController.dispose();
-    if (_eyeTrackingService.hasListeners) {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    }
+
+    _eyeTrackingService.removePage('material_reader');
+
     print("DEBUG: MaterialReaderPage disposed");
     super.dispose();
   }
@@ -87,6 +88,22 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
 
     final screenHeight = MediaQuery.of(context).size.height;
     final screenWidth = MediaQuery.of(context).size.width;
+    final safeAreaTop = MediaQuery.of(context).padding.top;
+    final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+
+    // FIXED: Calculate proper positions avoiding bottom navigation
+    final headerHeight = 120.0; // Height of the material reader header
+    final contentAreaTop = safeAreaTop + headerHeight;
+    final contentAreaBottom =
+        screenHeight - _bottomNavigationHeight - safeAreaBottom;
+    final availableContentHeight = contentAreaBottom - contentAreaTop;
+
+    print("DEBUG: Screen height: $screenHeight");
+    print("DEBUG: Safe area top: $safeAreaTop, bottom: $safeAreaBottom");
+    print("DEBUG: Content area: $contentAreaTop to $contentAreaBottom");
+    print("DEBUG: Available content height: $availableContentHeight");
+    print(
+        "DEBUG: Bottom nav starts at: ${screenHeight - _bottomNavigationHeight - safeAreaBottom}");
 
     // Back button boundary
     _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
@@ -101,15 +118,28 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     _buttonBounds['font_decrease'] =
         Rect.fromLTWH(screenWidth - 70, 110, 40, 40);
 
-    // Navigation zones - FIXED POSITIONING
-    _buttonBounds['scroll_up_zone'] =
-        Rect.fromLTWH(0, 120, screenWidth, _navigationZoneHeight);
-    _buttonBounds['scroll_down_zone'] = Rect.fromLTWH(
-        0,
-        screenHeight - _navigationZoneHeight,
-        screenWidth,
-        _navigationZoneHeight);
+    // FIXED: Navigation zones positioned within content area, avoiding bottom nav
+    // Scroll up zone - positioned right after header
+    _buttonBounds['scroll_up_zone'] = Rect.fromLTWH(
+      0,
+      contentAreaTop,
+      screenWidth,
+      _navigationZoneHeight,
+    );
 
+    // Scroll down zone - positioned before bottom navigation with safe margin
+    final scrollDownTop = contentAreaBottom -
+        _navigationZoneHeight -
+        20; // 20px margin from bottom nav
+    _buttonBounds['scroll_down_zone'] = Rect.fromLTWH(
+      0,
+      scrollDownTop,
+      screenWidth,
+      _navigationZoneHeight,
+    );
+
+    print("DEBUG: Scroll up zone: ${_buttonBounds['scroll_up_zone']}");
+    print("DEBUG: Scroll down zone: ${_buttonBounds['scroll_down_zone']}");
     print(
         "DEBUG: Initialized ${_buttonBounds.length} button bounds for MaterialReader");
   }
@@ -134,6 +164,8 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     for (final entry in _buttonBounds.entries) {
       if (entry.value.contains(currentGazePoint)) {
         hoveredElement = entry.key;
+        print(
+            "DEBUG: Gaze detected on: $hoveredElement at (${currentGazePoint.dx.toInt()}, ${currentGazePoint.dy.toInt()})");
         break;
       }
     }
@@ -221,6 +253,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
       });
     }
 
+    print("DEBUG: Starting dwell timer for: $elementId (${dwellTimeMs}ms)");
     _dwellStartTime = DateTime.now();
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
@@ -242,6 +275,8 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
 
         if (progress >= 1.0) {
           timer.cancel();
+          print(
+              "DEBUG: Dwell timer completed for: $elementId, executing action");
           if (mounted && !_isDisposed) {
             action();
           }
@@ -256,6 +291,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
     _isAutoScrolling = false;
+
     if (mounted && !_isDisposed) {
       setState(() {
         _currentDwellingElement = null;
@@ -276,7 +312,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     setState(() {
       _isDarkMode = !_isDarkMode;
     });
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${_isDarkMode ? 'Dark' : 'Light'} mode enabled'),
@@ -292,7 +327,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     setState(() {
       _fontSize = (_fontSize + 2.0).clamp(12.0, 24.0);
     });
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Font size increased: ${_fontSize.toInt()}px'),
@@ -308,7 +342,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     setState(() {
       _fontSize = (_fontSize - 2.0).clamp(12.0, 24.0);
     });
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Font size decreased: ${_fontSize.toInt()}px'),
@@ -328,52 +361,65 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
       _isAutoScrolling = true;
     });
 
+    print("DEBUG: Starting auto-scroll ${isUp ? 'UP' : 'DOWN'}");
+
     // Show feedback
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Auto-scrolling ${isUp ? 'up' : 'down'}...'),
-        duration: const Duration(seconds: 2),
+        duration: const Duration(seconds: 3),
         backgroundColor: isUp ? Colors.purple : Colors.teal,
       ),
     );
 
-    // Start auto-scroll
+    // FIXED: Improved auto-scroll with better increments
     _autoScrollTimer = Timer.periodic(_autoScrollSpeed, (timer) {
       if (_isDisposed || !mounted || !_scrollController.hasClients) {
         timer.cancel();
+        _isAutoScrolling = false;
         return;
       }
 
       final currentOffset = _scrollController.offset;
       final maxOffset = _scrollController.position.maxScrollExtent;
-
       double newOffset;
+
+      // FIXED: Larger scroll increments for better visibility
+      final scrollAmount = isUp ? -150.0 : 150.0; // Increased from 2.0
+
       if (isUp) {
-        newOffset = (currentOffset - _scrollIncrement).clamp(0.0, maxOffset);
+        newOffset = (currentOffset + scrollAmount).clamp(0.0, maxOffset);
         if (newOffset <= 0) {
           timer.cancel();
           _isAutoScrolling = false;
+          print("DEBUG: Reached top of content");
         }
       } else {
-        newOffset = (currentOffset + _scrollIncrement).clamp(0.0, maxOffset);
+        newOffset = (currentOffset + scrollAmount).clamp(0.0, maxOffset);
         if (newOffset >= maxOffset) {
           timer.cancel();
           _isAutoScrolling = false;
+          print("DEBUG: Reached bottom of content");
         }
       }
 
-      _scrollController.jumpTo(newOffset);
+      _scrollController.animateTo(
+        newOffset,
+        duration: const Duration(milliseconds: 50),
+        curve: Curves.linear,
+      );
     });
 
-    // Auto-stop after 3 seconds
-    Timer(const Duration(seconds: 3), () {
+    // Auto-stop after 5 seconds (increased from 3)
+    Timer(const Duration(seconds: 5), () {
       _autoScrollTimer?.cancel();
       _autoScrollTimer = null;
       if (mounted) {
         setState(() {
           _isAutoScrolling = false;
         });
+        print("DEBUG: Auto-scroll timeout reached");
       }
     });
   }
@@ -458,7 +504,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
   }
 
   Widget _buildMaterialContent() {
-    // Sample material content - replace with actual content from your data source
     return Container(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -473,7 +518,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
             ),
           ),
           const SizedBox(height: 20),
-
           // Chapter 1
           Text(
             'Chapter 1: Introduction',
@@ -484,7 +528,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
             ),
           ),
           const SizedBox(height: 16),
-
           Text(
             _getSampleContent(),
             style: TextStyle(
@@ -493,9 +536,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
               color: _isDarkMode ? Colors.white70 : Colors.black87,
             ),
           ),
-
           const SizedBox(height: 24),
-
           // Chapter 2
           Text(
             'Chapter 2: Key Concepts',
@@ -507,7 +548,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
             ),
           ),
           const SizedBox(height: 16),
-
           Text(
             _getSampleContent(),
             style: TextStyle(
@@ -516,9 +556,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
               color: _isDarkMode ? Colors.white70 : Colors.black87,
             ),
           ),
-
           const SizedBox(height: 24),
-
           // Important Notes Box
           Container(
             padding: const EdgeInsets.all(16),
@@ -572,9 +610,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
               ],
             ),
           ),
-
           const SizedBox(height: 24),
-
           // Chapter 3
           Text(
             'Chapter 3: Examples and Practice',
@@ -586,7 +622,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
             ),
           ),
           const SizedBox(height: 16),
-
           Text(
             _getSampleContent(),
             style: TextStyle(
@@ -595,8 +630,45 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
               color: _isDarkMode ? Colors.white70 : Colors.black87,
             ),
           ),
-
-          const SizedBox(height: 50), // Extra space at the bottom
+          // Add much more content for testing scroll
+          const SizedBox(height: 24),
+          Text(
+            'Chapter 4: Advanced Topics',
+            style: TextStyle(
+              fontSize: _fontSize + 4,
+              fontWeight: FontWeight.w600,
+              color: _isDarkMode ? Colors.red.shade300 : Colors.red.shade700,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _getSampleContent(),
+            style: TextStyle(
+              fontSize: _fontSize,
+              height: 1.6,
+              color: _isDarkMode ? Colors.white70 : Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Chapter 5: Conclusion',
+            style: TextStyle(
+              fontSize: _fontSize + 4,
+              fontWeight: FontWeight.w600,
+              color: _isDarkMode ? Colors.cyan.shade300 : Colors.cyan.shade700,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _getSampleContent(),
+            style: TextStyle(
+              fontSize: _fontSize,
+              height: 1.6,
+              color: _isDarkMode ? Colors.white70 : Colors.black87,
+            ),
+          ),
+          const SizedBox(
+              height: 100), // Extra space at the bottom for scroll testing
         ],
       ),
     );
@@ -609,11 +681,7 @@ Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu 
 
 Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
 
-Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.
-
-At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.
-
-Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio nam libero tempore.''';
+Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.''';
   }
 
   @override
@@ -688,8 +756,7 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
                   ),
                 ),
               ),
-
-              // Scroll up zone - TRANSPARENT OVERLAY
+              // FIXED: Scroll up zone - positioned correctly
               Container(
                 height: _navigationZoneHeight,
                 width: double.infinity,
@@ -699,8 +766,8 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
                     end: Alignment.bottomCenter,
                     colors: [
                       (_currentDwellingElement == 'scroll_up_zone'
-                          ? Colors.purple.withOpacity(0.3)
-                          : Colors.purple.withOpacity(0.1)),
+                          ? Colors.purple.withOpacity(0.4)
+                          : Colors.purple.withOpacity(0.15)),
                       Colors.transparent,
                     ],
                   ),
@@ -712,27 +779,39 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
                       Icon(
                         Icons.keyboard_arrow_up,
                         color: _currentDwellingElement == 'scroll_up_zone'
-                            ? Colors.purple
-                            : Colors.purple.withOpacity(0.5),
-                        size: 24,
+                            ? Colors.purple.shade600
+                            : Colors.purple.withOpacity(0.6),
+                        size: 28,
                       ),
                       const SizedBox(width: 8),
                       Text(
                         'Look here to scroll up',
                         style: TextStyle(
                           color: _currentDwellingElement == 'scroll_up_zone'
-                              ? Colors.purple
+                              ? Colors.purple.shade600
                               : Colors.purple.withOpacity(0.7),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
+                      if (_currentDwellingElement == 'scroll_up_zone')
+                        Container(
+                          margin: const EdgeInsets.only(left: 12),
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            value: _dwellProgress,
+                            strokeWidth: 2,
+                            backgroundColor: Colors.purple.withOpacity(0.3),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.purple.shade600),
+                          ),
+                        ),
                     ],
                   ),
                 ),
               ),
-
-              // SCROLLABLE CONTENT AREA - FIXED
+              // SCROLLABLE CONTENT AREA - FIXED to take remaining space
               Expanded(
                 child: Container(
                   width: double.infinity,
@@ -746,8 +825,7 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
                   ),
                 ),
               ),
-
-              // Scroll down zone - TRANSPARENT OVERLAY
+              // FIXED: Scroll down zone - positioned above bottom navigation
               Container(
                 height: _navigationZoneHeight,
                 width: double.infinity,
@@ -757,8 +835,8 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
                     end: Alignment.topCenter,
                     colors: [
                       (_currentDwellingElement == 'scroll_down_zone'
-                          ? Colors.teal.withOpacity(0.3)
-                          : Colors.teal.withOpacity(0.1)),
+                          ? Colors.teal.withOpacity(0.4)
+                          : Colors.teal.withOpacity(0.15)),
                       Colors.transparent,
                     ],
                   ),
@@ -770,38 +848,48 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
                       Icon(
                         Icons.keyboard_arrow_down,
                         color: _currentDwellingElement == 'scroll_down_zone'
-                            ? Colors.teal
-                            : Colors.teal.withOpacity(0.5),
-                        size: 24,
+                            ? Colors.teal.shade600
+                            : Colors.teal.withOpacity(0.6),
+                        size: 28,
                       ),
                       const SizedBox(width: 8),
                       Text(
                         'Look here to scroll down',
                         style: TextStyle(
                           color: _currentDwellingElement == 'scroll_down_zone'
-                              ? Colors.teal
+                              ? Colors.teal.shade600
                               : Colors.teal.withOpacity(0.7),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
+                      if (_currentDwellingElement == 'scroll_down_zone')
+                        Container(
+                          margin: const EdgeInsets.only(left: 12),
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            value: _dwellProgress,
+                            strokeWidth: 2,
+                            backgroundColor: Colors.teal.withOpacity(0.3),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.teal.shade600),
+                          ),
+                        ),
                     ],
                   ),
                 ),
               ),
             ],
           ),
-
           // Control buttons - FLOATING OVERLAY
           _buildNavigationControls(),
-
           // Gaze point indicator
           GazePointWidget(
             gazeX: _eyeTrackingService.gazeX,
             gazeY: _eyeTrackingService.gazeY,
             isVisible: _eyeTrackingService.isTracking,
           ),
-
           // Status information
           StatusInfoWidget(
             statusMessage: _eyeTrackingService.statusMessage,
@@ -812,27 +900,44 @@ Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et d
             currentDwellingElement: _currentDwellingElement,
             dwellProgress: _dwellProgress,
           ),
-
-          // Auto-scroll indicator
+          // FIXED: Auto-scroll indicator with better visibility
           if (_isAutoScrolling)
             Positioned(
-              top: MediaQuery.of(context).size.height / 2 - 50,
-              left: MediaQuery.of(context).size.width / 2 - 50,
+              top: MediaQuery.of(context).size.height / 2 - 60,
+              left: MediaQuery.of(context).size.width / 2 - 60,
               child: Container(
-                width: 100,
-                height: 100,
+                width: 120,
+                height: 120,
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(50),
+                  color: Colors.black.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(60),
+                  border: Border.all(color: Colors.white, width: 2),
                 ),
-                child: const Column(
+                child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 8),
+                    const CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 3,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Auto-scrolling...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
                     Text(
-                      'Scrolling...',
-                      style: TextStyle(color: Colors.white, fontSize: 12),
+                      'Look away to stop',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                        fontSize: 10,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
