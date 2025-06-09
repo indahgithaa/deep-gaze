@@ -32,13 +32,23 @@ class _TugasPageState extends State<TugasPage> {
   Timer? _dwellTimer;
   DateTime? _dwellStartTime;
 
-  // Dwell time configuration - 600ms for keyboard, 1.5s for other buttons
+  // Dwell time configuration
   static const int _keyboardDwellTimeMs = 600;
   static const int _buttonDwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 100;
 
   // Button boundaries for automatic detection
   final Map<String, Rect> _buttonBounds = {};
+
+  // Question management
+  int _currentQuestionIndex = 0;
+  final List<String> _questions = [
+    "I ___ a mistake yesterday (do).",
+    "Last week, I ___ Julia (meet).",
+    "What is 2 + 2?",
+    "Write a short greeting.",
+    "What day is today?"
+  ];
 
   // Text input state
   String _answerText = '';
@@ -49,6 +59,8 @@ class _TugasPageState extends State<TugasPage> {
   final GlobalKey _answerBoxKey = GlobalKey();
   final GlobalKey _submitButtonKey = GlobalKey();
   final GlobalKey _clearButtonKey = GlobalKey();
+  final GlobalKey _nextButtonKey = GlobalKey();
+  final GlobalKey _prevButtonKey = GlobalKey();
 
   // Flag to track if bounds have been calculated
   bool _boundsCalculated = false;
@@ -82,13 +94,14 @@ class _TugasPageState extends State<TugasPage> {
   }
 
   void _initializeStaticButtonBounds() {
-    // Initialize non-keyboard button bounds (these will be updated with actual positions)
+    // Initialize non-keyboard button bounds
     _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
-    _buttonBounds['submit_button'] = const Rect.fromLTWH(50, 700, 300, 60);
+    _buttonBounds['submit_button'] = const Rect.fromLTWH(50, 700, 200, 50);
     _buttonBounds['clear_button'] = const Rect.fromLTWH(260, 180, 100, 40);
+    _buttonBounds['next_button'] = const Rect.fromLTWH(260, 700, 80, 50);
+    _buttonBounds['prev_button'] = const Rect.fromLTWH(20, 700, 80, 50);
   }
 
-  // Calculate actual keyboard bounds using RenderBox
   void _calculateActualKeyboardBounds() {
     if (_isDisposed || !mounted) return;
 
@@ -96,10 +109,10 @@ class _TugasPageState extends State<TugasPage> {
       // Update actual positions for static buttons
       _updateButtonPosition('clear_button', _clearButtonKey);
       _updateButtonPosition('submit_button', _submitButtonKey);
+      _updateButtonPosition('next_button', _nextButtonKey);
+      _updateButtonPosition('prev_button', _prevButtonKey);
 
       print("DEBUG: Triggering keyboard bounds calculation");
-
-      // Mark bounds as calculated
       _boundsCalculated = true;
     } catch (e) {
       print("DEBUG: Error calculating bounds: $e");
@@ -126,13 +139,9 @@ class _TugasPageState extends State<TugasPage> {
     }
   }
 
-  // Callback to receive keyboard bounds from the keyboard widget
   void _onKeyboardBoundsCalculated(Map<String, Rect> keyboardBounds) {
     print("DEBUG: Received keyboard bounds: ${keyboardBounds.length} keys");
-
-    // Update keyboard bounds
     _buttonBounds.addAll(keyboardBounds);
-
     if (mounted) {
       setState(() {
         _boundsCalculated = true;
@@ -142,7 +151,6 @@ class _TugasPageState extends State<TugasPage> {
 
   void _onEyeTrackingUpdate() {
     if (_isDisposed || !mounted || !_boundsCalculated) return;
-
     if (!_eyeTrackingService.isTracking) return;
 
     final currentGazePoint =
@@ -190,6 +198,10 @@ class _TugasPageState extends State<TugasPage> {
       action = _submitAnswer;
     } else if (elementId == 'clear_button') {
       action = _clearText;
+    } else if (elementId == 'next_button') {
+      action = _nextQuestion;
+    } else if (elementId == 'prev_button') {
+      action = _previousQuestion;
     } else if (elementId.startsWith('key_')) {
       final keyValue = elementId.substring(4);
       action = () => _onKeyPressed(keyValue);
@@ -286,6 +298,48 @@ class _TugasPageState extends State<TugasPage> {
     Navigator.of(context).pop();
   }
 
+  void _nextQuestion() {
+    if (_isDisposed || !mounted) return;
+    _stopDwellTimer();
+
+    if (_currentQuestionIndex < _questions.length - 1) {
+      setState(() {
+        _currentQuestionIndex++;
+        _answerText = ''; // Clear answer for new question
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Question ${_currentQuestionIndex + 1} of ${_questions.length}'),
+          duration: const Duration(seconds: 1),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    }
+  }
+
+  void _previousQuestion() {
+    if (_isDisposed || !mounted) return;
+    _stopDwellTimer();
+
+    if (_currentQuestionIndex > 0) {
+      setState(() {
+        _currentQuestionIndex--;
+        _answerText = ''; // Clear answer for previous question
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Question ${_currentQuestionIndex + 1} of ${_questions.length}'),
+          duration: const Duration(seconds: 1),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    }
+  }
+
   void _onKeyPressed(String key) {
     if (_isDisposed || !mounted) return;
 
@@ -361,20 +415,20 @@ class _TugasPageState extends State<TugasPage> {
       barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Assignment Submitted!'),
+          title: const Text('Answer Submitted!'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Topic: ${widget.topic.name}',
+                'Question ${_currentQuestionIndex + 1}: ${_questions[_currentQuestionIndex]}',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               const Text('Your Answer:'),
               const SizedBox(height: 5),
               Container(
-                constraints: const BoxConstraints(maxHeight: 200),
+                constraints: const BoxConstraints(maxHeight: 150),
                 child: SingleChildScrollView(
                   child: Text(
                     _answerText,
@@ -391,12 +445,20 @@ class _TugasPageState extends State<TugasPage> {
             ],
           ),
           actions: [
+            if (_currentQuestionIndex < _questions.length - 1)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _nextQuestion();
+                },
+                child: const Text('Next Question'),
+              ),
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).pop();
               },
-              child: const Text('Back to Topics'),
+              child: const Text('Finish'),
             ),
             TextButton(
               onPressed: () {
@@ -405,11 +467,72 @@ class _TugasPageState extends State<TugasPage> {
                   _answerText = '';
                 });
               },
-              child: const Text('Start Over'),
+              child: const Text('Clear & Retry'),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildQuestionHeader() {
+    return Container(
+      margin: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.help_outline, color: Colors.blue.shade700, size: 24),
+              const SizedBox(width: 8),
+              Text(
+                'Question ${_currentQuestionIndex + 1} of ${_questions.length}',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+              const Spacer(),
+              // Question navigation indicators
+              Row(
+                children: List.generate(_questions.length, (index) {
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: index == _currentQuestionIndex
+                          ? Colors.blue.shade700
+                          : Colors.grey.shade300,
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blue.shade200),
+            ),
+            child: Text(
+              _questions[_currentQuestionIndex],
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: Colors.black87,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -418,7 +541,7 @@ class _TugasPageState extends State<TugasPage> {
 
     return Container(
       key: _answerBoxKey,
-      margin: const EdgeInsets.all(20),
+      margin: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -433,7 +556,7 @@ class _TugasPageState extends State<TugasPage> {
                 ),
               ),
               const Spacer(),
-              // Clear button with clean styling
+              // Clear button
               Material(
                 key: _clearButtonKey,
                 elevation: isCurrentlyDwelling ? 4 : 2,
@@ -446,7 +569,6 @@ class _TugasPageState extends State<TugasPage> {
                     color: isCurrentlyDwelling
                         ? Colors.red.shade50
                         : Colors.grey.shade50,
-                    // REMOVED: border property to hide borders
                   ),
                   child: Stack(
                     children: [
@@ -494,7 +616,7 @@ class _TugasPageState extends State<TugasPage> {
           const SizedBox(height: 10),
           Container(
             width: double.infinity,
-            height: 120,
+            height: 100,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
@@ -537,59 +659,200 @@ class _TugasPageState extends State<TugasPage> {
     );
   }
 
-  Widget _buildSubmitButton() {
-    final isCurrentlyDwelling = _currentDwellingElement == 'submit_button';
+  Widget _buildNavigationButtons() {
+    final isSubmitDwelling = _currentDwellingElement == 'submit_button';
+    final isNextDwelling = _currentDwellingElement == 'next_button';
+    final isPrevDwelling = _currentDwellingElement == 'prev_button';
     final hasText = _answerText.trim().isNotEmpty;
+    final isLastQuestion = _currentQuestionIndex == _questions.length - 1;
+    final isFirstQuestion = _currentQuestionIndex == 0;
 
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: Container(
-        key: _submitButtonKey,
-        width: double.infinity,
-        height: 50,
-        child: Material(
-          elevation: isCurrentlyDwelling ? 6 : 2,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: hasText
-                  ? (isCurrentlyDwelling
-                      ? Colors.blue.shade700
-                      : Colors.blue.shade600)
-                  : Colors.grey.shade300,
-              // REMOVED: border property to hide borders
-            ),
-            child: Stack(
-              children: [
-                if (isCurrentlyDwelling)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    child: Container(
-                      height: 3,
-                      width: (MediaQuery.of(context).size.width - 40) *
-                          _dwellProgress,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+      child: Row(
+        children: [
+          // Previous button
+          if (!isFirstQuestion)
+            Expanded(
+              flex: 1,
+              child: Container(
+                key: _prevButtonKey,
+                height: 50,
+                margin: const EdgeInsets.only(right: 8),
+                child: Material(
+                  elevation: isPrevDwelling ? 6 : 2,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: isPrevDwelling
+                          ? Colors.grey.shade300
+                          : Colors.grey.shade100,
                     ),
-                  ),
-                Center(
-                  child: Text(
-                    hasText ? 'Submit Assignment' : 'Type your answer first',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: hasText ? Colors.white : Colors.grey.shade600,
+                    child: Stack(
+                      children: [
+                        if (isPrevDwelling)
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade600,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: _dwellProgress,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade800,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        const Center(
+                          child: Text(
+                            'Previous',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ],
+              ),
+            ),
+
+          // Submit button
+          Expanded(
+            flex: 2,
+            child: Container(
+              key: _submitButtonKey,
+              height: 50,
+              margin: EdgeInsets.symmetric(horizontal: isFirstQuestion ? 0 : 8),
+              child: Material(
+                elevation: isSubmitDwelling ? 6 : 2,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: hasText
+                        ? (isSubmitDwelling
+                            ? Colors.green.shade700
+                            : Colors.green.shade600)
+                        : Colors.grey.shade300,
+                  ),
+                  child: Stack(
+                    children: [
+                      if (isSubmitDwelling)
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: FractionallySizedBox(
+                              alignment: Alignment.centerLeft,
+                              widthFactor: _dwellProgress,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      Center(
+                        child: Text(
+                          hasText ? 'Submit Answer' : 'Type answer first',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color:
+                                hasText ? Colors.white : Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
+
+          // Next button (only if not last question)
+          if (!isLastQuestion)
+            Expanded(
+              flex: 1,
+              child: Container(
+                key: _nextButtonKey,
+                height: 50,
+                margin: const EdgeInsets.only(left: 8),
+                child: Material(
+                  elevation: isNextDwelling ? 6 : 2,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: isNextDwelling
+                          ? Colors.blue.shade700
+                          : Colors.blue.shade600,
+                    ),
+                    child: Stack(
+                      children: [
+                        if (isNextDwelling)
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: _dwellProgress,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        const Center(
+                          child: Text(
+                            'Next',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -637,7 +900,7 @@ class _TugasPageState extends State<TugasPage> {
                         ),
                         const Expanded(
                           child: Text(
-                            'Tugas',
+                            'Assignment Questions',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w600,
@@ -661,45 +924,7 @@ class _TugasPageState extends State<TugasPage> {
                       ],
                     ),
                   ),
-                  // Topic info
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 20),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.assignment,
-                            color: Colors.white, size: 24),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.topic.name,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                widget.subject.name,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.8),
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
+
                   // Main content area
                   Expanded(
                     child: Container(
@@ -712,9 +937,15 @@ class _TugasPageState extends State<TugasPage> {
                       ),
                       child: Column(
                         children: [
+                          // Question header
+                          _buildQuestionHeader(),
+
                           // Answer input box
                           _buildAnswerBox(),
-                          // Eye-controlled keyboard with bounds callback
+
+                          const SizedBox(height: 10),
+
+                          // Eye-controlled keyboard
                           Expanded(
                             child: Container(
                               key: _keyboardContainerKey,
@@ -726,8 +957,9 @@ class _TugasPageState extends State<TugasPage> {
                               ),
                             ),
                           ),
-                          // Submit button
-                          _buildSubmitButton(),
+
+                          // Navigation buttons
+                          _buildNavigationButtons(),
                         ],
                       ),
                     ),
@@ -752,11 +984,8 @@ class _TugasPageState extends State<TugasPage> {
             currentDwellingElement: _currentDwellingElement,
             dwellProgress: _dwellProgress,
           ),
-          // REMOVED: Debug bounds visualization overlay
         ],
       ),
     );
   }
 }
-
-// REMOVED: BoundsDebugPainter class and related debug visualization
