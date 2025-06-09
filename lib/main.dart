@@ -1,61 +1,40 @@
-import 'package:deep_gaze/pages/ruang_kelas.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'pages/eye_calibration_page.dart';
+import 'pages/ruang_kelas.dart';
+import 'pages/lecture_recorder_page.dart';
+import 'pages/profile_page.dart';
+import 'widgets/main_app_scaffold.dart';
 
 void main() {
-  runApp(const SeesoEyeTrackingApp());
+  runApp(const MyApp());
 }
 
-class SeesoEyeTrackingApp extends StatelessWidget {
-  const SeesoEyeTrackingApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-        title: 'SeeSo Eye Tracking Application',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          visualDensity: VisualDensity.adaptivePlatformDensity,
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: Colors.black,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            systemOverlayStyle: SystemUiOverlayStyle.light,
-          ),
-          dialogTheme: DialogTheme(
-            backgroundColor: Colors.grey.shade800,
-            titleTextStyle: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-            contentTextStyle: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-            ),
-          ),
-          // Custom button themes
-          elevatedButtonTheme: ElevatedButtonThemeData(
-            style: ElevatedButton.styleFrom(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-          textButtonTheme: TextButtonThemeData(
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.blue.shade400,
-            ),
-          ),
-        ),
-        home: const EyeCalibrationPage(),
-        routes: {
-          '/calibration': (context) => const EyeCalibrationPage(),
-          '/ruang-kelas': (context) => const RuangKelas(),
-        });
+      title: 'DeepGaze',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const EyeCalibrationPage(),
+        '/home': (context) =>
+            const MainAppScaffold(initialIndex: 0), // Home with navbar
+        '/recorder': (context) =>
+            const MainAppScaffold(initialIndex: 1), // Recorder with navbar
+        '/profile': (context) =>
+            const MainAppScaffold(initialIndex: 2), // Profile with navbar
+        // Direct routes (without navbar) for navigation from other pages
+        '/ruang_kelas_direct': (context) => const RuangKelas(),
+        '/recorder_direct': (context) => const LectureRecorderPage(),
+        '/profile_direct': (context) => const ProfilePage(),
+      },
+      debugShowCheckedModeBanner: false,
+    );
   }
 }

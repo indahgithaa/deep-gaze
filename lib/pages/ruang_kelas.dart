@@ -1,4 +1,4 @@
-// File: lib/pages/ruang_kelas.dart
+// File: lib/pages/ruang_kelas_responsive.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/subject.dart';
@@ -7,6 +7,7 @@ import '../models/question.dart';
 import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
+import '../mixins/responsive_bounds_mixin.dart';
 import 'subject_details_page.dart';
 
 class RuangKelas extends StatefulWidget {
@@ -16,7 +17,7 @@ class RuangKelas extends StatefulWidget {
   State<RuangKelas> createState() => _RuangKelasState();
 }
 
-class _RuangKelasState extends State<RuangKelas> {
+class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
@@ -30,21 +31,27 @@ class _RuangKelasState extends State<RuangKelas> {
   static const int _dwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
 
-  // Button boundaries for automatic detection
-  final Map<String, Rect> _buttonBounds = {};
+  // Dynamic button boundaries using responsive bounds
+  Map<String, Rect> _buttonBounds = {};
+
+  // GlobalKeys for each subject card
+  final Map<String, GlobalKey> _subjectKeys = {};
 
   @override
   void initState() {
     super.initState();
-    print("DEBUG: RuangKelas initState - setting as active page");
+    print("DEBUG: RuangKelasResponsive initState - setting as active page");
     _eyeTrackingService = GlobalSeesoService();
-
-    // NEW: Set this page as active instead of adding listener
     _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
+
+    // Initialize subject keys
+    _initializeSubjectKeys();
 
     _eyeTrackingService.debugPrintStatus();
     _initializeEyeTracking();
-    _initializeButtonBounds();
+
+    // Calculate bounds after build
+    updateBoundsAfterBuild();
   }
 
   @override
@@ -52,40 +59,40 @@ class _RuangKelasState extends State<RuangKelas> {
     _isDisposed = true;
     _dwellTimer?.cancel();
     _dwellTimer = null;
-
-    // NEW: Remove this page from service
     _eyeTrackingService.removePage('ruang_kelas');
-
-    print("DEBUG: RuangKelas disposed and removed from service");
+    clearBounds();
+    print("DEBUG: RuangKelasResponsive disposed and removed from service");
     super.dispose();
   }
 
-  void _initializeButtonBounds() {
-    // Define button boundaries - will be updated dynamically
-    _buttonBounds['english'] = const Rect.fromLTWH(20, 250, 350, 120);
-    _buttonBounds['math'] = const Rect.fromLTWH(20, 390, 350, 120);
-    _buttonBounds['science'] = const Rect.fromLTWH(20, 530, 350, 120);
+  void _initializeSubjectKeys() {
+    final subjects = _getSubjects();
+    for (final subject in subjects) {
+      _subjectKeys[subject.id] = generateKeyForElement(subject.id);
+    }
   }
 
   void _onEyeTrackingUpdate() {
     if (_isDisposed || !mounted) return;
 
+    // Update bounds if they haven't been calculated yet
+    if (_buttonBounds.isEmpty) {
+      _buttonBounds = calculateScaledBounds();
+    }
+
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
-    String? hoveredButton;
 
-    // Check which subject card is being gazed at
-    for (final entry in _buttonBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredButton = entry.key;
-        break;
-      }
-    }
+    // Use the responsive bounds mixin to find hovered element
+    String? hoveredButton = getElementAtPoint(currentGazePoint);
 
     if (hoveredButton != null) {
       if (_currentDwellingElement != hoveredButton) {
         final subjects = _getSubjects();
-        final subject = subjects.firstWhere((s) => s.id == hoveredButton);
+        final subject = subjects.firstWhere(
+          (s) => s.id == hoveredButton,
+          orElse: () => subjects.first,
+        );
         _startDwellTimer(
             hoveredButton, () => _navigateToSubjectDetails(subject));
       }
@@ -104,9 +111,10 @@ class _RuangKelasState extends State<RuangKelas> {
     if (_isDisposed || !mounted) return;
 
     try {
-      print("DEBUG: Initializing eye tracking di RuangKelas");
+      print("DEBUG: Initializing eye tracking di RuangKelasResponsive");
       await _eyeTrackingService.initialize(context);
-      print("DEBUG: Eye tracking berhasil diinisialisasi di RuangKelas");
+      print(
+          "DEBUG: Eye tracking berhasil diinisialisasi di RuangKelasResponsive");
       _eyeTrackingService.debugPrintStatus();
     } catch (e) {
       print('Eye tracking initialization failed: $e');
@@ -121,6 +129,13 @@ class _RuangKelasState extends State<RuangKelas> {
         );
       }
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change (like screen rotation)
+    updateBoundsAfterBuild();
   }
 
   void _startDwellTimer(String elementId, VoidCallback action) {
@@ -180,7 +195,6 @@ class _RuangKelasState extends State<RuangKelas> {
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
 
-    // NEW: Temporarily deactivate this page during navigation
     _eyeTrackingService.removePage('ruang_kelas');
 
     Navigator.of(context)
@@ -200,10 +214,11 @@ class _RuangKelasState extends State<RuangKelas> {
       ),
     )
         .then((_) {
-      // NEW: Re-activate this page when returning
       if (!_isDisposed && mounted) {
-        print("DEBUG: Returned to RuangKelas, reactivating");
+        print("DEBUG: Returned to RuangKelasResponsive, reactivating");
         _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
+        // Recalculate bounds when returning
+        updateBoundsAfterBuild();
       }
     });
   }
@@ -524,7 +539,7 @@ class _RuangKelasState extends State<RuangKelas> {
 
                   const SizedBox(height: 30),
 
-                  // Subject Cards
+                  // Subject Cards with responsive bounds
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -535,6 +550,7 @@ class _RuangKelasState extends State<RuangKelas> {
                             _currentDwellingElement == subject.id;
 
                         return Container(
+                          key: _subjectKeys[subject.id], // Responsive key
                           margin: const EdgeInsets.only(bottom: 20),
                           child: Material(
                             elevation: isCurrentlyDwelling ? 8 : 4,

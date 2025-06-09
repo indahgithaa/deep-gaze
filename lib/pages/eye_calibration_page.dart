@@ -1,4 +1,4 @@
-// File: lib/pages/seeso_eye_calibration_page.dart
+// File: lib/pages/eye_calibration_page.dart
 import 'package:deep_gaze/constants/app_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,7 +10,7 @@ import 'package:seeso_flutter/seeso.dart';
 import 'package:seeso_flutter/seeso_initialized_result.dart';
 import 'package:seeso_flutter/seeso_plugin_constants.dart';
 import '../services/global_seeso_service.dart'; // Import service global
-import 'ruang_kelas.dart';
+import '../widgets/main_app_scaffold.dart'; // CHANGED: Import MainAppScaffold instead of RuangKelas
 
 class EyeCalibrationPage extends StatefulWidget {
   const EyeCalibrationPage({super.key});
@@ -47,7 +47,6 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
   @override
   void initState() {
     super.initState();
-
     // Initialize service global
     _seesoService = GlobalSeesoService();
 
@@ -125,6 +124,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
 
   Future<void> _getSeeSoVersion() async {
     if (_isDisposed) return;
+
     try {
       String? seesoVersion = await _seesoPlugin.getSeeSoVersion();
       if (mounted && !_isDisposed) {
@@ -171,10 +171,10 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
         _pulseController.stop();
         _fadeController.forward();
 
-        // Navigate to classroom after showing completion
+        // Navigate to main app after showing completion
         Future.delayed(const Duration(seconds: 2), () {
           if (!_isDisposed && mounted) {
-            _navigateToClassroom();
+            _navigateToMainApp(); // CHANGED: Navigate to MainAppScaffold
           }
         });
       }
@@ -212,7 +212,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _navigateToClassroom();
+                _navigateToMainApp(); // CHANGED: Navigate to MainAppScaffold
               },
               child: const Text('Skip'),
             ),
@@ -222,15 +222,18 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
     );
   }
 
-  void _navigateToClassroom() {
+  // CHANGED: Navigate to MainAppScaffold instead of RuangKelas
+  void _navigateToMainApp() {
     if (_isDisposed || !mounted) return;
-    print("DEBUG: Navigating to classroom. Service status:");
+
+    print("DEBUG: Navigating to MainAppScaffold with navigation bar");
     _seesoService.debugPrintStatus();
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            const RuangKelas(),
+            const MainAppScaffold(
+                initialIndex: 0), // Start with Home (RuangKelas)
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(
             opacity: animation,
@@ -255,29 +258,6 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
                 child: _buildMainContent(),
               ),
             ),
-
-            // Gaze point indicator - DISEMBUNYIKAN di halaman kalibrasi
-            // if (_seesoService.isTracking)
-            //   Positioned(
-            //     left: _seesoService.gazeX - 5,
-            //     top: _seesoService.gazeY - 5,
-            //     child: Container(
-            //       width: 10,
-            //       height: 10,
-            //       decoration: BoxDecoration(
-            //         color: Colors.green,
-            //         shape: BoxShape.circle,
-            //         boxShadow: [
-            //           BoxShadow(
-            //             color: Colors.green.withOpacity(0.6),
-            //             blurRadius: 8,
-            //             spreadRadius: 2,
-            //           ),
-            //         ],
-            //       ),
-            //     ),
-            //   ),
-
             // Calibration point
             if (_seesoService.isCalibrating)
               Positioned(
@@ -324,7 +304,6 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
                   },
                 ),
               ),
-
             // Status overlay
             _buildStatusOverlay(),
           ],
@@ -360,13 +339,13 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
           ),
           const SizedBox(height: 20),
           Text(
             message,
             style: const TextStyle(
-              color: Colors.white,
+              color: Colors.black,
               fontSize: 16,
             ),
             textAlign: TextAlign.center,
@@ -384,7 +363,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
           const Icon(
             Icons.camera_alt,
             size: 80,
-            color: Colors.white70,
+            color: Colors.grey,
           ),
           const SizedBox(height: 20),
           const Text(
@@ -392,7 +371,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: Colors.black,
             ),
             textAlign: TextAlign.center,
           ),
@@ -436,7 +415,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: Colors.black,
             ),
             textAlign: TextAlign.center,
           ),
@@ -445,7 +424,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             _seesoService.statusMessage,
             style: const TextStyle(
               fontSize: 16,
-              color: Colors.white70,
+              color: Colors.grey,
             ),
             textAlign: TextAlign.center,
           ),
@@ -612,7 +591,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Redirecting to classroom...',
+                  'Redirecting to app with navigation...',
                   style: TextStyle(
                     fontSize: 16,
                     color: Colors.black,
