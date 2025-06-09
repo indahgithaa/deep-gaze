@@ -63,6 +63,7 @@ class GlobalSeesoService extends ChangeNotifier {
   bool get calibrationComplete => _calibrationComplete;
   bool get isFaceDetected => _trackingState != TrackingState.FACE_MISSING;
   bool get isTrackingStable => _trackingState == TrackingState.SUCCESS;
+
   String get trackingStatusString {
     switch (_trackingState) {
       case TrackingState.SUCCESS:
@@ -77,7 +78,6 @@ class GlobalSeesoService extends ChangeNotifier {
   }
 
   // === PAGE FOCUS MANAGEMENT METHODS ===
-
   /// Register a page as the active listener
   void setActivePage(String pageId, VoidCallback listener) {
     print("DEBUG: Setting active page: $pageId (previous: $_activePageId)");
@@ -100,7 +100,6 @@ class GlobalSeesoService extends ChangeNotifier {
   /// Remove a page from active listening
   void removePage(String pageId) {
     print("DEBUG: Removing page: $pageId");
-
     _pageListeners.remove(pageId);
     _pageActiveStatus.remove(pageId);
 
@@ -136,6 +135,7 @@ Page Status: $_pageActiveStatus
   Future<bool> initializeSeeSo() async {
     print(
         "DEBUG: initializeSeeSo() called. Already initialized: $_isInitialized");
+
     if (_isInitialized && _seesoPlugin != null) {
       print("DEBUG: SeeSo already initialized, ensuring tracking is active");
       await _ensureTrackingActive();
@@ -144,6 +144,7 @@ Page Status: $_pageActiveStatus
 
     try {
       print("DEBUG: Starting SeeSo initialization...");
+
       // Create SeeSo instance
       if (_seesoPlugin == null) {
         _seesoPlugin = SeeSo();
@@ -197,12 +198,14 @@ Page Status: $_pageActiveStatus
 
   void _setupEventListeners() {
     if (_seesoPlugin == null) return;
+
     print("DEBUG: Setting up SeeSo event listeners");
 
     try {
       // PENTING: Gaze events - ini yang mengupdate gaze point
       _seesoPlugin!.getGazeEvent().listen((event) {
         GazeInfo info = GazeInfo(event);
+
         // Update gaze position - KUNCI untuk gaze point
         _gazeX = info.x;
         _gazeY = info.y;
@@ -221,6 +224,7 @@ Page Status: $_pageActiveStatus
       // Status events
       _seesoPlugin!.getStatusEvent().listen((event) {
         StatusInfo statusInfo = StatusInfo(event);
+
         if (statusInfo.type == StatusType.START) {
           _isTracking = true;
           _statusMessage = "Tracking Started";
@@ -230,12 +234,14 @@ Page Status: $_pageActiveStatus
           _statusMessage = "Tracking Stopped: ${statusInfo.stateErrorType}";
           print("DEBUG: Tracking stopped: ${statusInfo.stateErrorType}");
         }
+
         _notifyActivePageOnly();
       });
 
       // Calibration events
       _seesoPlugin!.getCalibrationEvent().listen((event) {
         CalibrationInfo caliInfo = CalibrationInfo(event);
+
         if (caliInfo.type == CalibrationType.CALIBRATION_NEXT_XY) {
           _isCalibrating = true;
           _calibrationComplete = false;
@@ -337,25 +343,28 @@ Page Status: $_pageActiveStatus
   // Method ini untuk kompatibilitas dengan existing code
   Future<void> initialize(BuildContext context) async {
     print("DEBUG: initialize() called from UI component");
+
     if (!_isInitialized) {
       bool success = await initializeSeeSo();
       if (!success) {
         throw Exception("SeeSo initialization failed");
       }
     }
+
     // Ensure tracking is active
     await _ensureTrackingActive();
   }
 
   // DEPRECATED: Use setActivePage instead
+  @override
   void addListener(VoidCallback listener) {
-    print("WARNING: addListener is deprecated. Use setActivePage instead.");
+    // Don't show warning for ChangeNotifier listeners
     super.addListener(listener);
   }
 
   // DEPRECATED: Use removePage instead
+  @override
   void removeListener(VoidCallback listener) {
-    print("WARNING: removeListener is deprecated. Use removePage instead.");
     try {
       super.removeListener(listener);
     } catch (e) {
@@ -363,6 +372,7 @@ Page Status: $_pageActiveStatus
     }
   }
 
+  @override
   bool get hasListeners => _pageListeners.isNotEmpty || super.hasListeners;
 
   Offset getCalibratedGaze() {
@@ -433,9 +443,11 @@ Gaze Position: ($_gazeX, $_gazeY)
   void cleanup() {
     try {
       print("DEBUG: Cleaning up GlobalSeesoService...");
+
       if (_isTracking && _seesoPlugin != null) {
         _seesoPlugin!.stopTracking();
       }
+
       if (_isInitialized && _seesoPlugin != null) {
         _seesoPlugin!.deinitGazeTracker();
       }
@@ -448,6 +460,7 @@ Gaze Position: ($_gazeX, $_gazeY)
       _isInitialized = false;
       _isTracking = false;
       _seesoPlugin = null;
+
       print("DEBUG: Cleanup complete");
     } catch (e) {
       print("DEBUG: Cleanup error: ${e.toString()}");
