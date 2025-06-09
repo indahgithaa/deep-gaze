@@ -19,7 +19,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   late GlobalSeesoService _eyeTrackingService;
   late stt.SpeechToText _speech;
   bool _isDisposed = false;
-  bool _isInitialized = false; // ADDED: Track initialization state
+  bool _isInitialized = false;
 
   // Dwell time selection state
   String? _currentDwellingElement;
@@ -58,7 +58,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     super.initState();
     print("DEBUG: LectureRecorderPage initState");
 
-    // Initialize services
     _eyeTrackingService = GlobalSeesoService();
     _speech = stt.SpeechToText();
 
@@ -88,7 +87,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       curve: Curves.easeInOut,
     ));
 
-    // FIXED: Delay initialization until after the first frame
+    // Delay initialization until after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_isDisposed && mounted) {
         _initializeAsync();
@@ -96,22 +95,14 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     });
   }
 
-  // ADDED: Separate async initialization method
   Future<void> _initializeAsync() async {
     if (_isDisposed || !mounted) return;
 
     try {
-      // Set active page FIRST
       _eyeTrackingService.setActivePage(
           'lecture_recorder', _onEyeTrackingUpdate);
-
-      // Initialize eye tracking
       await _initializeEyeTracking();
-
-      // Initialize speech
       await _initializeSpeech();
-
-      // Initialize button bounds
       _initializeButtonBounds();
 
       setState(() {
@@ -123,7 +114,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       print("DEBUG: LectureRecorderPage initialization error: $e");
       if (mounted) {
         setState(() {
-          _isInitialized = true; // Show UI even if there are errors
+          _isInitialized = true;
         });
       }
     }
@@ -138,7 +129,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     _waveController.dispose();
     _scrollController.dispose();
 
-    // Remove from eye tracking service
     _eyeTrackingService.removePage('lecture_recorder');
 
     print("DEBUG: LectureRecorderPage disposed");
@@ -149,17 +139,20 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     if (!mounted) return;
 
     final screenSize = MediaQuery.of(context).size;
+    final centerX = screenSize.width / 2;
+    final centerY = screenSize.height / 2;
 
+    // FIXED: Separate bounds for record and stop buttons based on recording state
     // Back button
     _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
 
-    // Record button (center)
-    _buttonBounds['record_button'] = Rect.fromLTWH(
-        screenSize.width / 2 - 60, screenSize.height / 2 - 60, 120, 120);
+    // Record button - only active when NOT recording
+    _buttonBounds['record_button'] =
+        Rect.fromLTWH(centerX - 60, centerY - 60, 120, 120);
 
-    // Stop button (same position as record button)
-    _buttonBounds['stop_button'] = Rect.fromLTWH(
-        screenSize.width / 2 - 60, screenSize.height / 2 - 60, 120, 120);
+    // Stop button - only active when recording (SAME POSITION but different ID)
+    _buttonBounds['stop_button'] =
+        Rect.fromLTWH(centerX - 60, centerY - 60, 120, 120);
 
     // Notes button
     _buttonBounds['notes_button'] =
@@ -168,6 +161,10 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     // Save note button
     _buttonBounds['save_note_button'] =
         Rect.fromLTWH(20, screenSize.height - 120, screenSize.width - 40, 50);
+
+    print("DEBUG: Button bounds initialized for LectureRecorder");
+    print("DEBUG: Record button bounds: ${_buttonBounds['record_button']}");
+    print("DEBUG: Stop button bounds: ${_buttonBounds['stop_button']}");
   }
 
   void _onEyeTrackingUpdate() {
@@ -178,16 +175,41 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
     String? hoveredElement;
 
-    // Check which element is being gazed at
-    for (final entry in _buttonBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredElement = entry.key;
-        break;
+    // FIXED: Check only relevant buttons based on recording state
+    if (_isRecording) {
+      // When recording, only check stop button, back button, notes button
+      final activeButtons = ['stop_button', 'back_button', 'notes_button'];
+      if (_transcribedText.isNotEmpty) {
+        activeButtons.add('save_note_button');
+      }
+
+      for (final buttonId in activeButtons) {
+        final bounds = _buttonBounds[buttonId];
+        if (bounds != null && bounds.contains(currentGazePoint)) {
+          hoveredElement = buttonId;
+          break;
+        }
+      }
+    } else {
+      // When not recording, only check record button, back button, notes button
+      final activeButtons = ['record_button', 'back_button', 'notes_button'];
+      if (_transcribedText.isNotEmpty) {
+        activeButtons.add('save_note_button');
+      }
+
+      for (final buttonId in activeButtons) {
+        final bounds = _buttonBounds[buttonId];
+        if (bounds != null && bounds.contains(currentGazePoint)) {
+          hoveredElement = buttonId;
+          break;
+        }
       }
     }
 
     if (hoveredElement != null) {
       if (_currentDwellingElement != hoveredElement) {
+        print(
+            "DEBUG: Hovering over: $hoveredElement (recording: $_isRecording)");
         _handleElementHover(hoveredElement);
       }
     } else {
@@ -212,14 +234,15 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         if (!_isRecording) {
           action = _startRecording;
         } else {
-          return; // Don't allow record action if already recording
+          return; // Should not happen due to filtering in _onEyeTrackingUpdate
         }
         break;
       case 'stop_button':
         if (_isRecording) {
           action = _stopRecording;
+          print("DEBUG: Stop button action assigned");
         } else {
-          return; // Don't allow stop action if not recording
+          return; // Should not happen due to filtering in _onEyeTrackingUpdate
         }
         break;
       case 'notes_button':
@@ -229,10 +252,11 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         if (_transcribedText.isNotEmpty) {
           action = _saveNote;
         } else {
-          return; // Don't allow save if no text
+          return;
         }
         break;
       default:
+        print("DEBUG: Unknown element: $elementId");
         return;
     }
 
@@ -310,6 +334,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       });
     }
 
+    print("DEBUG: Starting dwell timer for: $elementId");
     _dwellStartTime = DateTime.now();
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
@@ -331,6 +356,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
         if (progress >= 1.0) {
           timer.cancel();
+          print(
+              "DEBUG: Dwell timer completed for: $elementId, executing action");
           if (mounted && !_isDisposed) {
             action();
           }
@@ -365,6 +392,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   void _startRecording() {
     if (_isDisposed || !mounted || _isRecording) return;
     _stopDwellTimer();
+
+    print("DEBUG: Starting recording...");
 
     if (!_speechAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -417,7 +446,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         localeId: 'id_ID',
       );
     } else {
-      // Simulation mode - add sample text
+      // Simulation mode
       Timer.periodic(const Duration(seconds: 3), (timer) {
         if (!_isRecording || _isDisposed) {
           timer.cancel();
@@ -454,6 +483,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   void _stopRecording() {
     if (_isDisposed || !mounted || !_isRecording) return;
     _stopDwellTimer();
+
+    print("DEBUG: Stopping recording...");
 
     setState(() {
       _isRecording = false;
@@ -531,35 +562,33 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   }
 
   Widget _buildRecordButton() {
-    final isCurrentlyDwelling =
-        _currentDwellingElement == 'record_button' && !_isRecording;
+    // FIXED: Show record button only when not recording
+    if (_isRecording) return const SizedBox.shrink();
+
+    final isCurrentlyDwelling = _currentDwellingElement == 'record_button';
 
     return AnimatedBuilder(
-      animation:
-          _isRecording ? _pulseAnimation : const AlwaysStoppedAnimation(1.0),
+      animation: const AlwaysStoppedAnimation(1.0),
       builder: (context, child) {
         return Transform.scale(
-          scale: _isRecording
-              ? _pulseAnimation.value
-              : (isCurrentlyDwelling ? 1.1 : 1.0),
+          scale: isCurrentlyDwelling ? 1.1 : 1.0,
           child: Container(
             width: 120,
             height: 120,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _isRecording ? Colors.red.shade600 : Colors.blue.shade600,
+              color: Colors.blue.shade600,
               boxShadow: [
                 BoxShadow(
-                  color: (_isRecording ? Colors.red : Colors.blue)
-                      .withOpacity(0.4),
-                  blurRadius: _isRecording ? 20 : 10,
-                  spreadRadius: _isRecording ? 5 : 2,
+                  color: Colors.blue.withOpacity(0.4),
+                  blurRadius: 10,
+                  spreadRadius: 2,
                 ),
               ],
             ),
             child: Stack(
               children: [
-                if (isCurrentlyDwelling && !_isRecording)
+                if (isCurrentlyDwelling)
                   Positioned.fill(
                     child: CircularProgressIndicator(
                       value: _dwellProgress,
@@ -569,9 +598,61 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                           const AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   ),
-                Center(
+                const Center(
                   child: Icon(
-                    _isRecording ? Icons.stop : Icons.mic,
+                    Icons.mic,
+                    size: 48,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildStopButton() {
+    // FIXED: Show stop button only when recording
+    if (!_isRecording) return const SizedBox.shrink();
+
+    final isCurrentlyDwelling = _currentDwellingElement == 'stop_button';
+
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _pulseAnimation.value * (isCurrentlyDwelling ? 1.1 : 1.0),
+          child: Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.red.shade600,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.red.withOpacity(0.4),
+                  blurRadius: 20,
+                  spreadRadius: 5,
+                ),
+              ],
+            ),
+            child: Stack(
+              children: [
+                if (isCurrentlyDwelling)
+                  Positioned.fill(
+                    child: CircularProgressIndicator(
+                      value: _dwellProgress,
+                      strokeWidth: 4,
+                      backgroundColor: Colors.white.withOpacity(0.3),
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                const Center(
+                  child: Icon(
+                    Icons.stop,
                     size: 48,
                     color: Colors.white,
                   ),
@@ -881,7 +962,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
   @override
   Widget build(BuildContext context) {
-    // Show loading state until initialized
     if (!_isInitialized) {
       return const Scaffold(
         body: Center(
@@ -1054,11 +1134,16 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                       child: Column(
                         children: [
                           const SizedBox(height: 40),
-                          // Record button area
+                          // Record/Stop button area - FIXED: Show appropriate button
                           SizedBox(
                             height: 200,
                             child: Center(
-                              child: _buildRecordButton(),
+                              child: Stack(
+                                children: [
+                                  _buildRecordButton(),
+                                  _buildStopButton(),
+                                ],
+                              ),
                             ),
                           ),
                           // Instructions
@@ -1066,8 +1151,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                             padding: const EdgeInsets.symmetric(horizontal: 40),
                             child: Text(
                               _isRecording
-                                  ? 'Look at the stop button for 1.5 seconds to stop recording'
-                                  : 'Look at the record button for 1.5 seconds to start recording',
+                                  ? 'Look at the red stop button for 1.5 seconds to stop recording'
+                                  : 'Look at the blue record button for 1.5 seconds to start recording',
                               style: TextStyle(
                                 fontSize: 16,
                                 color: Colors.grey.shade600,
