@@ -6,6 +6,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
+import '../mixins/responsive_bounds_mixin.dart';
 
 class LectureRecorderPage extends StatefulWidget {
   const LectureRecorderPage({super.key});
@@ -15,7 +16,7 @@ class LectureRecorderPage extends StatefulWidget {
 }
 
 class _LectureRecorderPageState extends State<LectureRecorderPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, ResponsiveBoundsMixin {
   late GlobalSeesoService _eyeTrackingService;
   late stt.SpeechToText _speech;
   bool _isDisposed = false;
@@ -30,9 +31,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   // Dwell time configuration - 1.5 seconds
   static const int _dwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
-
-  // Button boundaries for automatic detection
-  final Map<String, Rect> _buttonBounds = {};
 
   // Recording state
   bool _isRecording = false;
@@ -52,6 +50,13 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   // Notes storage
   final List<LectureNote> _savedNotes = [];
   final ScrollController _scrollController = ScrollController();
+
+  // Override mixin configuration
+  @override
+  double get boundsUpdateDelay => 150.0;
+
+  @override
+  bool get enableBoundsLogging => true;
 
   @override
   void initState() {
@@ -87,12 +92,54 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       curve: Curves.easeInOut,
     ));
 
+    // Initialize element keys using mixin
+    _initializeElementKeys();
+
     // Delay initialization until after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_isDisposed && mounted) {
         _initializeAsync();
       }
     });
+  }
+
+  void _initializeElementKeys() {
+    // Generate keys for all interactive elements using the mixin
+    generateKeyForElement('back_button');
+    generateKeyForElement('record_button');
+    generateKeyForElement('stop_button');
+    generateKeyForElement('notes_button');
+    generateKeyForElement('save_note_button');
+
+    print("DEBUG: Generated ${elementCount} element keys using mixin");
+
+    // Calculate bounds after build using mixin
+    updateBoundsAfterBuild();
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _dwellTimer?.cancel();
+    _recordingTimer?.cancel();
+    _pulseController.dispose();
+    _waveController.dispose();
+    _scrollController.dispose();
+
+    _eyeTrackingService.removePage('lecture_recorder');
+
+    // Clean up mixin resources
+    clearBounds();
+
+    print("DEBUG: LectureRecorderPage disposed");
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change
+    updateBoundsAfterBuild();
   }
 
   Future<void> _initializeAsync() async {
@@ -103,7 +150,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
           'lecture_recorder', _onEyeTrackingUpdate);
       await _initializeEyeTracking();
       await _initializeSpeech();
-      _initializeButtonBounds();
 
       setState(() {
         _isInitialized = true;
@@ -120,60 +166,14 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     }
   }
 
-  @override
-  void dispose() {
-    _isDisposed = true;
-    _dwellTimer?.cancel();
-    _recordingTimer?.cancel();
-    _pulseController.dispose();
-    _waveController.dispose();
-    _scrollController.dispose();
-
-    _eyeTrackingService.removePage('lecture_recorder');
-
-    print("DEBUG: LectureRecorderPage disposed");
-    super.dispose();
-  }
-
-  void _initializeButtonBounds() {
-    if (!mounted) return;
-
-    final screenSize = MediaQuery.of(context).size;
-    final centerX = screenSize.width / 2;
-    final centerY = screenSize.height / 2;
-
-    // FIXED: Separate bounds for record and stop buttons based on recording state
-    // Back button
-    _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
-
-    // Record button - only active when NOT recording
-    _buttonBounds['record_button'] =
-        Rect.fromLTWH(centerX - 60, centerY - 60, 120, 120);
-
-    // Stop button - only active when recording (SAME POSITION but different ID)
-    _buttonBounds['stop_button'] =
-        Rect.fromLTWH(centerX - 60, centerY - 60, 120, 120);
-
-    // Notes button
-    _buttonBounds['notes_button'] =
-        Rect.fromLTWH(screenSize.width - 80, 50, 60, 50);
-
-    // Save note button
-    _buttonBounds['save_note_button'] =
-        Rect.fromLTWH(20, screenSize.height - 120, screenSize.width - 40, 50);
-
-    print("DEBUG: Button bounds initialized for LectureRecorder");
-    print("DEBUG: Record button bounds: ${_buttonBounds['record_button']}");
-    print("DEBUG: Stop button bounds: ${_buttonBounds['stop_button']}");
-  }
-
   void _onEyeTrackingUpdate() {
     if (_isDisposed || !mounted || !_isInitialized) return;
 
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    String? hoveredElement;
+    // IMPROVED: Use mixin's precise hit detection
+    String? hoveredElement = getElementAtPoint(currentGazePoint);
 
     // FIXED: Check only relevant buttons based on recording state
     if (_isRecording) {
@@ -183,12 +183,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         activeButtons.add('save_note_button');
       }
 
-      for (final buttonId in activeButtons) {
-        final bounds = _buttonBounds[buttonId];
-        if (bounds != null && bounds.contains(currentGazePoint)) {
-          hoveredElement = buttonId;
-          break;
-        }
+      if (hoveredElement != null && !activeButtons.contains(hoveredElement)) {
+        hoveredElement = null; // Ignore non-active buttons
       }
     } else {
       // When not recording, only check record button, back button, notes button
@@ -197,12 +193,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         activeButtons.add('save_note_button');
       }
 
-      for (final buttonId in activeButtons) {
-        final bounds = _buttonBounds[buttonId];
-        if (bounds != null && bounds.contains(currentGazePoint)) {
-          hoveredElement = buttonId;
-          break;
-        }
+      if (hoveredElement != null && !activeButtons.contains(hoveredElement)) {
+        hoveredElement = null; // Ignore non-active buttons
       }
     }
 
@@ -573,6 +565,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         return Transform.scale(
           scale: isCurrentlyDwelling ? 1.1 : 1.0,
           child: Container(
+            key: generateKeyForElement('record_button'), // Use mixin
             width: 120,
             height: 120,
             decoration: BoxDecoration(
@@ -625,6 +618,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
         return Transform.scale(
           scale: _pulseAnimation.value * (isCurrentlyDwelling ? 1.1 : 1.0),
           child: Container(
+            key: generateKeyForElement('stop_button'), // Use mixin
             width: 120,
             height: 120,
             decoration: BoxDecoration(
@@ -769,6 +763,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     final isCurrentlyDwelling = _currentDwellingElement == 'save_note_button';
 
     return Container(
+      key: generateKeyForElement('save_note_button'), // Use mixin
       width: double.infinity,
       height: 50,
       child: Material(
@@ -1000,6 +995,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                     child: Row(
                       children: [
                         GestureDetector(
+                          key:
+                              generateKeyForElement('back_button'), // Use mixin
                           onTap: _goBack,
                           child: Container(
                             padding: const EdgeInsets.all(8),
@@ -1026,6 +1023,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                           ),
                         ),
                         GestureDetector(
+                          key: generateKeyForElement(
+                              'notes_button'), // Use mixin
                           onTap: _showNotes,
                           child: Container(
                             padding: const EdgeInsets.all(8),

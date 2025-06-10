@@ -7,6 +7,7 @@ import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../widgets/eye_controlled_keyboard.dart';
+import '../mixins/responsive_bounds_mixin.dart';
 
 class TugasPage extends StatefulWidget {
   final Subject subject;
@@ -22,7 +23,7 @@ class TugasPage extends StatefulWidget {
   State<TugasPage> createState() => _TugasPageState();
 }
 
-class _TugasPageState extends State<TugasPage> {
+class _TugasPageState extends State<TugasPage> with ResponsiveBoundsMixin {
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
@@ -36,9 +37,6 @@ class _TugasPageState extends State<TugasPage> {
   static const int _keyboardDwellTimeMs = 600;
   static const int _buttonDwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 100;
-
-  // Button boundaries for automatic detection
-  final Map<String, Rect> _buttonBounds = {};
 
   // Question management
   int _currentQuestionIndex = 0;
@@ -54,16 +52,15 @@ class _TugasPageState extends State<TugasPage> {
   String _answerText = '';
   final ScrollController _scrollController = ScrollController();
 
-  // Keys for getting actual widget positions
-  final GlobalKey _keyboardContainerKey = GlobalKey();
-  final GlobalKey _answerBoxKey = GlobalKey();
-  final GlobalKey _submitButtonKey = GlobalKey();
-  final GlobalKey _clearButtonKey = GlobalKey();
-  final GlobalKey _nextButtonKey = GlobalKey();
-  final GlobalKey _prevButtonKey = GlobalKey();
-
   // Flag to track if bounds have been calculated
   bool _boundsCalculated = false;
+
+  // Override mixin configuration
+  @override
+  double get boundsUpdateDelay => 150.0;
+
+  @override
+  bool get enableBoundsLogging => true;
 
   @override
   void initState() {
@@ -71,13 +68,28 @@ class _TugasPageState extends State<TugasPage> {
     print("DEBUG: TugasPage initState");
     _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.addListener(_onEyeTrackingUpdate);
-    _initializeEyeTracking();
-    _initializeStaticButtonBounds();
 
-    // Calculate keyboard bounds after the widget tree is built
+    // Initialize element keys using mixin
+    _initializeElementKeys();
+
+    _initializeEyeTracking();
+
+    // Calculate bounds after the widget tree is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _calculateActualKeyboardBounds();
+      updateBoundsAfterBuild();
     });
+  }
+
+  void _initializeElementKeys() {
+    // Generate keys for navigation and control buttons using mixin
+    generateKeyForElement('back_button');
+    generateKeyForElement('submit_button');
+    generateKeyForElement('clear_button');
+    generateKeyForElement('next_button');
+    generateKeyForElement('prev_button');
+
+    print(
+        "DEBUG: Generated ${elementCount} non-keyboard element keys using mixin");
   }
 
   @override
@@ -89,64 +101,36 @@ class _TugasPageState extends State<TugasPage> {
     if (_eyeTrackingService.hasListeners) {
       _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
     }
+
+    // Clean up mixin resources
+    clearBounds();
+
     print("DEBUG: TugasPage disposed");
     super.dispose();
   }
 
-  void _initializeStaticButtonBounds() {
-    // Initialize non-keyboard button bounds
-    _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
-    _buttonBounds['submit_button'] = const Rect.fromLTWH(50, 700, 200, 50);
-    _buttonBounds['clear_button'] = const Rect.fromLTWH(260, 180, 100, 40);
-    _buttonBounds['next_button'] = const Rect.fromLTWH(260, 700, 80, 50);
-    _buttonBounds['prev_button'] = const Rect.fromLTWH(20, 700, 80, 50);
-  }
-
-  void _calculateActualKeyboardBounds() {
-    if (_isDisposed || !mounted) return;
-
-    try {
-      // Update actual positions for static buttons
-      _updateButtonPosition('clear_button', _clearButtonKey);
-      _updateButtonPosition('submit_button', _submitButtonKey);
-      _updateButtonPosition('next_button', _nextButtonKey);
-      _updateButtonPosition('prev_button', _prevButtonKey);
-
-      print("DEBUG: Triggering keyboard bounds calculation");
-      _boundsCalculated = true;
-    } catch (e) {
-      print("DEBUG: Error calculating bounds: $e");
-    }
-  }
-
-  void _updateButtonPosition(String buttonId, GlobalKey key) {
-    try {
-      final RenderBox? renderBox =
-          key.currentContext?.findRenderObject() as RenderBox?;
-      if (renderBox != null) {
-        final position = renderBox.localToGlobal(Offset.zero);
-        final size = renderBox.size;
-        _buttonBounds[buttonId] = Rect.fromLTWH(
-          position.dx,
-          position.dy,
-          size.width,
-          size.height,
-        );
-        print("DEBUG: Updated $buttonId bounds: ${_buttonBounds[buttonId]}");
-      }
-    } catch (e) {
-      print("DEBUG: Error updating $buttonId position: $e");
-    }
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change
+    updateBoundsAfterBuild();
   }
 
   void _onKeyboardBoundsCalculated(Map<String, Rect> keyboardBounds) {
     print("DEBUG: Received keyboard bounds: ${keyboardBounds.length} keys");
-    _buttonBounds.addAll(keyboardBounds);
+
+    // Add keyboard bounds to the mixin's bounds system
+    keyboardBounds.forEach((elementId, bounds) {
+      updateElementBounds(elementId, bounds);
+    });
+
     if (mounted) {
       setState(() {
         _boundsCalculated = true;
       });
     }
+
+    print("DEBUG: Total bounds after keyboard integration: ${boundsCount}");
   }
 
   void _onEyeTrackingUpdate() {
@@ -164,15 +148,8 @@ class _TugasPageState extends State<TugasPage> {
       return;
     }
 
-    String? hoveredElement;
-
-    // Check which element is being gazed at
-    for (final entry in _buttonBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredElement = entry.key;
-        break;
-      }
-    }
+    // Use mixin's precise hit detection for all elements
+    String? hoveredElement = getElementAtPoint(currentGazePoint);
 
     // Only process if hover state changed
     if (hoveredElement != _currentDwellingElement) {
@@ -308,6 +285,9 @@ class _TugasPageState extends State<TugasPage> {
         _answerText = ''; // Clear answer for new question
       });
 
+      // Recalculate bounds after question change
+      updateBoundsAfterBuild();
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -328,6 +308,9 @@ class _TugasPageState extends State<TugasPage> {
         _currentQuestionIndex--;
         _answerText = ''; // Clear answer for previous question
       });
+
+      // Recalculate bounds after question change
+      updateBoundsAfterBuild();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -540,7 +523,6 @@ class _TugasPageState extends State<TugasPage> {
     final isCurrentlyDwelling = _currentDwellingElement == 'clear_button';
 
     return Container(
-      key: _answerBoxKey,
       margin: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -556,9 +538,9 @@ class _TugasPageState extends State<TugasPage> {
                 ),
               ),
               const Spacer(),
-              // Clear button
+              // Clear button using mixin
               Material(
-                key: _clearButtonKey,
+                key: generateKeyForElement('clear_button'), // Use mixin
                 elevation: isCurrentlyDwelling ? 4 : 2,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
@@ -671,12 +653,12 @@ class _TugasPageState extends State<TugasPage> {
       padding: const EdgeInsets.all(20),
       child: Row(
         children: [
-          // Previous button
+          // Previous button using mixin
           if (!isFirstQuestion)
             Expanded(
               flex: 1,
               child: Container(
-                key: _prevButtonKey,
+                key: generateKeyForElement('prev_button'), // Use mixin
                 height: 50,
                 margin: const EdgeInsets.only(right: 8),
                 child: Material(
@@ -731,11 +713,11 @@ class _TugasPageState extends State<TugasPage> {
               ),
             ),
 
-          // Submit button
+          // Submit button using mixin
           Expanded(
             flex: 2,
             child: Container(
-              key: _submitButtonKey,
+              key: generateKeyForElement('submit_button'), // Use mixin
               height: 50,
               margin: EdgeInsets.symmetric(horizontal: isFirstQuestion ? 0 : 8),
               child: Material(
@@ -793,12 +775,12 @@ class _TugasPageState extends State<TugasPage> {
             ),
           ),
 
-          // Next button (only if not last question)
+          // Next button using mixin (only if not last question)
           if (!isLastQuestion)
             Expanded(
               flex: 1,
               child: Container(
-                key: _nextButtonKey,
+                key: generateKeyForElement('next_button'), // Use mixin
                 height: 50,
                 margin: const EdgeInsets.only(left: 8),
                 child: Material(
@@ -884,6 +866,8 @@ class _TugasPageState extends State<TugasPage> {
                     child: Row(
                       children: [
                         GestureDetector(
+                          key:
+                              generateKeyForElement('back_button'), // Use mixin
                           onTap: _goBack,
                           child: Container(
                             padding: const EdgeInsets.all(8),
@@ -945,16 +929,13 @@ class _TugasPageState extends State<TugasPage> {
 
                           const SizedBox(height: 10),
 
-                          // Eye-controlled keyboard
+                          // Eye-controlled keyboard with mixin integration
                           Expanded(
-                            child: Container(
-                              key: _keyboardContainerKey,
-                              child: EyeControlledKeyboard(
-                                onKeyPressed: _onKeyPressed,
-                                currentDwellingElement: _currentDwellingElement,
-                                dwellProgress: _dwellProgress,
-                                onBoundsCalculated: _onKeyboardBoundsCalculated,
-                              ),
+                            child: EyeControlledKeyboard(
+                              onKeyPressed: _onKeyPressed,
+                              currentDwellingElement: _currentDwellingElement,
+                              dwellProgress: _dwellProgress,
+                              onBoundsCalculated: _onKeyboardBoundsCalculated,
                             ),
                           ),
 

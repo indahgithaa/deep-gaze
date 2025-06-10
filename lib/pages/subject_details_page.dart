@@ -6,9 +6,10 @@ import '../models/topic.dart';
 import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
+import '../mixins/responsive_bounds_mixin.dart';
 import 'quiz_page.dart';
 import 'tugas_page.dart';
-import 'material_reader_page.dart'; // NEW IMPORT
+import 'material_reader_page.dart';
 
 class SubjectDetailsPage extends StatefulWidget {
   final Subject subject;
@@ -22,7 +23,8 @@ class SubjectDetailsPage extends StatefulWidget {
   State<SubjectDetailsPage> createState() => _SubjectDetailsPageState();
 }
 
-class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
+class _SubjectDetailsPageState extends State<SubjectDetailsPage>
+    with ResponsiveBoundsMixin {
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
@@ -36,11 +38,15 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
   static const int _dwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
 
-  // Button boundaries for automatic detection
-  final Map<String, Rect> _buttonBounds = {};
-
   // Current selected tab
   String _selectedTab = 'Semua';
+
+  // Override mixin configuration
+  @override
+  double get boundsUpdateDelay => 200.0; // Longer delay for ListView items
+
+  @override
+  bool get enableBoundsLogging => true;
 
   @override
   void initState() {
@@ -48,8 +54,26 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     print("DEBUG: SubjectDetailsPage initState");
     _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+
+    // Initialize element keys using mixin
+    _initializeElementKeys();
+
     _initializeEyeTracking();
-    _initializeButtonBounds();
+
+    // Calculate bounds after build using mixin
+    updateBoundsAfterBuild();
+  }
+
+  void _initializeElementKeys() {
+    // Generate key for back button
+    generateKeyForElement('back_button');
+
+    // Generate keys for all topics using mixin
+    for (final topic in widget.subject.topics) {
+      generateKeyForElement(topic.id);
+    }
+
+    print("DEBUG: Generated ${elementCount} element keys using mixin");
   }
 
   @override
@@ -60,19 +84,19 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     if (_eyeTrackingService.hasListeners) {
       _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
     }
+
+    // Clean up mixin resources
+    clearBounds();
+
     print("DEBUG: SubjectDetailsPage disposed");
     super.dispose();
   }
 
-  void _initializeButtonBounds() {
-    // Define button boundaries for topics - will update dynamically
-    // These are approximate positions, will be updated based on actual layout
-    for (int i = 0; i < widget.subject.topics.length; i++) {
-      _buttonBounds[widget.subject.topics[i].id] =
-          Rect.fromLTWH(20, 300 + (i * 80), 350, 70);
-    }
-    // Back button boundary
-    _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change
+    updateBoundsAfterBuild();
   }
 
   void _onEyeTrackingUpdate() {
@@ -80,15 +104,9 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
 
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
-    String? hoveredElement;
 
-    // Check which element is being gazed at
-    for (final entry in _buttonBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredElement = entry.key;
-        break;
-      }
-    }
+    // Use mixin's precise hit detection
+    String? hoveredElement = getElementAtPoint(currentGazePoint);
 
     if (hoveredElement != null) {
       if (_currentDwellingElement != hoveredElement) {
@@ -229,6 +247,8 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         // Re-add listener when returning from quiz
         if (!_isDisposed && mounted) {
           _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+          // Recalculate bounds when returning
+          updateBoundsAfterBuild();
         }
       });
     } else if (topic.type == 'Tugas') {
@@ -255,6 +275,8 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         // Re-add listener when returning from tugas
         if (!_isDisposed && mounted) {
           _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+          // Recalculate bounds when returning
+          updateBoundsAfterBuild();
         }
       });
     } else if (topic.type == 'Materi') {
@@ -282,6 +304,8 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
         // Re-add listener when returning from material reader
         if (!_isDisposed && mounted) {
           _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+          // Recalculate bounds when returning
+          updateBoundsAfterBuild();
         }
       });
     } else {
@@ -339,6 +363,7 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
     }
 
     return Container(
+      key: generateKeyForElement(topic.id), // Use mixin for key
       margin: const EdgeInsets.only(bottom: 15),
       child: Material(
         elevation: isCurrentlyDwelling ? 8 : 2,
@@ -538,6 +563,8 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
                         Row(
                           children: [
                             GestureDetector(
+                              key: generateKeyForElement(
+                                  'back_button'), // Use mixin
                               onTap: _goBack,
                               child: Container(
                                 padding: const EdgeInsets.all(8),
@@ -640,6 +667,8 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage> {
                               setState(() {
                                 _selectedTab = tab;
                               });
+                              // Recalculate bounds when tab changes
+                              updateBoundsAfterBuild();
                             },
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 10),
