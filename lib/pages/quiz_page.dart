@@ -8,6 +8,7 @@ import '../models/quiz_result.dart';
 import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
+import '../mixins/responsive_bounds_mixin.dart';
 
 class QuizPage extends StatefulWidget {
   final Subject subject;
@@ -25,7 +26,7 @@ class QuizPage extends StatefulWidget {
   State<QuizPage> createState() => _QuizPageState();
 }
 
-class _QuizPageState extends State<QuizPage> {
+class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
@@ -41,12 +42,16 @@ class _QuizPageState extends State<QuizPage> {
   Timer? _dwellTimer;
   DateTime? _dwellStartTime;
 
-  // Dwell time configuration - 2 seconds for quiz answers
+  // Dwell time configuration - 1.5 seconds for quiz answers
   static const int _dwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
 
-  // Button boundaries for automatic detection
-  final Map<String, Rect> _buttonBounds = {};
+  // Override mixin configuration
+  @override
+  double get boundsUpdateDelay => 150.0;
+
+  @override
+  bool get enableBoundsLogging => true;
 
   @override
   void initState() {
@@ -54,13 +59,13 @@ class _QuizPageState extends State<QuizPage> {
     print("DEBUG: QuizPage initState");
     _eyeTrackingService = GlobalSeesoService();
 
-    // NEW: Set this page as active
+    // Set this page as active using the focus system
     _eyeTrackingService.setActivePage('quiz_page', _onEyeTrackingUpdate);
 
     // Initialize user answers list
     _userAnswers = List.filled(widget.questions.length, null);
     _initializeEyeTracking();
-    _initializeButtonBounds();
+    _initializeQuizElements();
   }
 
   @override
@@ -69,24 +74,39 @@ class _QuizPageState extends State<QuizPage> {
     _dwellTimer?.cancel();
     _dwellTimer = null;
 
-    // NEW: Remove this page from service
+    // Remove this page from service
     _eyeTrackingService.removePage('quiz_page');
+
+    // Clean up mixin resources
+    clearBounds();
 
     print("DEBUG: QuizPage disposed");
     super.dispose();
   }
 
-  void _initializeButtonBounds() {
-    // Define button boundaries for answer options
+  void _initializeQuizElements() {
+    // Generate keys for answer options (4 options per question)
     for (int i = 0; i < 4; i++) {
-      _buttonBounds['answer_$i'] = Rect.fromLTWH(40, 350 + (i * 80), 300, 60);
+      generateKeyForElement('answer_$i');
     }
 
-    // Back button and submit button boundaries
-    _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
-    _buttonBounds['submit_button'] = const Rect.fromLTWH(50, 650, 300, 60);
-    _buttonBounds['next_button'] = const Rect.fromLTWH(250, 650, 120, 60);
-    _buttonBounds['previous_button'] = const Rect.fromLTWH(50, 650, 120, 60);
+    // Generate keys for navigation buttons
+    generateKeyForElement('back_button');
+    generateKeyForElement('submit_button');
+    generateKeyForElement('next_button');
+    generateKeyForElement('previous_button');
+
+    print("DEBUG: Generated ${elementCount} quiz element keys using mixin");
+
+    // Calculate bounds after build
+    updateBoundsAfterBuild();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change
+    updateBoundsAfterBuild();
   }
 
   void _onEyeTrackingUpdate() {
@@ -94,22 +114,19 @@ class _QuizPageState extends State<QuizPage> {
 
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
-    String? hoveredElement;
 
-    // Check which element is being gazed at
-    for (final entry in _buttonBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredElement = entry.key;
-        break;
-      }
-    }
+    // Use mixin's precise hit detection
+    String? hoveredElement = getElementAtPoint(currentGazePoint);
 
     if (hoveredElement != null) {
       if (_currentDwellingElement != hoveredElement) {
+        print("DEBUG: QuizPage - Started dwelling on: $hoveredElement");
         _handleElementHover(hoveredElement);
       }
     } else {
       if (_currentDwellingElement != null) {
+        print(
+            "DEBUG: QuizPage - Stopped dwelling on: $_currentDwellingElement");
         _stopDwellTimer();
       }
     }
@@ -144,9 +161,9 @@ class _QuizPageState extends State<QuizPage> {
     if (_isDisposed || !mounted) return;
 
     try {
-      print("DEBUG: Initializing eye tracking di QuizPage");
+      print("DEBUG: Initializing eye tracking in QuizPage");
       await _eyeTrackingService.initialize(context);
-      print("DEBUG: Eye tracking berhasil diinisialisasi di QuizPage");
+      print("DEBUG: Eye tracking successfully initialized in QuizPage");
     } catch (e) {
       print('Eye tracking initialization failed: $e');
       if (mounted && !_isDisposed) {
@@ -249,6 +266,9 @@ class _QuizPageState extends State<QuizPage> {
         _currentQuestionIndex++;
         _showExplanation = false;
       });
+
+      // Recalculate bounds for new question
+      updateBoundsAfterBuild();
     }
   }
 
@@ -261,6 +281,9 @@ class _QuizPageState extends State<QuizPage> {
         _currentQuestionIndex--;
         _showExplanation = false;
       });
+
+      // Recalculate bounds for new question
+      updateBoundsAfterBuild();
     }
   }
 
@@ -353,6 +376,8 @@ class _QuizPageState extends State<QuizPage> {
                   _quizCompleted = false;
                   _showExplanation = false;
                 });
+                // Recalculate bounds for reset quiz
+                updateBoundsAfterBuild();
               },
               child: const Text('Retake Quiz'),
             ),
@@ -389,6 +414,7 @@ class _QuizPageState extends State<QuizPage> {
     }
 
     return Container(
+      key: generateKeyForElement('answer_$index'), // Use mixin for key
       margin: const EdgeInsets.only(bottom: 12),
       child: Material(
         elevation: isCurrentlyDwelling ? 4 : 1,
@@ -500,6 +526,7 @@ class _QuizPageState extends State<QuizPage> {
           if (_currentQuestionIndex > 0)
             Expanded(
               child: Container(
+                key: generateKeyForElement('previous_button'), // Use mixin
                 height: 50,
                 margin: const EdgeInsets.only(right: 10),
                 child: Material(
@@ -556,6 +583,9 @@ class _QuizPageState extends State<QuizPage> {
           // Next/Submit button
           Expanded(
             child: Container(
+              key: generateKeyForElement(isLastQuestion
+                  ? 'submit_button'
+                  : 'next_button'), // Use mixin
               height: 50,
               margin: EdgeInsets.only(left: _currentQuestionIndex > 0 ? 10 : 0),
               child: Material(
@@ -671,6 +701,8 @@ class _QuizPageState extends State<QuizPage> {
                     child: Row(
                       children: [
                         GestureDetector(
+                          key:
+                              generateKeyForElement('back_button'), // Use mixin
                           onTap: _goBack,
                           child: Container(
                             padding: const EdgeInsets.all(8),
