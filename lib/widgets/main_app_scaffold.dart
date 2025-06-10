@@ -354,15 +354,15 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
             ),
 
             // Status information
-            StatusInfoWidget(
-              statusMessage: _eyeTrackingService.statusMessage,
-              currentPage: _currentIndex + 1,
-              totalPages: 3,
-              gazeX: _eyeTrackingService.gazeX,
-              gazeY: _eyeTrackingService.gazeY,
-              currentDwellingElement: _currentDwellingElement,
-              dwellProgress: _dwellProgress,
-            ),
+            // StatusInfoWidget(
+            //   statusMessage: _eyeTrackingService.statusMessage,
+            //   currentPage: _currentIndex + 1,
+            //   totalPages: 3,
+            //   gazeX: _eyeTrackingService.gazeX,
+            //   gazeY: _eyeTrackingService.gazeY,
+            //   currentDwellingElement: _currentDwellingElement,
+            //   dwellProgress: _dwellProgress,
+            // ),
           ],
         ],
       ),

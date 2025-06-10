@@ -305,7 +305,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
                 ),
               ),
             // Status overlay
-            _buildStatusOverlay(),
+            // _buildStatusOverlay(),
           ],
         ),
       ),
@@ -591,7 +591,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Redirecting to app with navigation...',
+                  'Redirecting to classroom...',
                   style: TextStyle(
                     fontSize: 16,
                     color: Colors.black,

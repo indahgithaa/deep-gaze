@@ -1004,16 +1004,16 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
             isVisible: _eyeTrackingService.isTracking,
           ),
 
-          // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 5,
-            totalPages: 5,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
-          ),
+          // // Status information
+          // StatusInfoWidget(
+          //   statusMessage: _eyeTrackingService.statusMessage,
+          //   currentPage: 5,
+          //   totalPages: 5,
+          //   gazeX: _eyeTrackingService.gazeX,
+          //   gazeY: _eyeTrackingService.gazeY,
+          //   currentDwellingElement: _currentDwellingElement,
+          //   dwellProgress: _dwellProgress,
+          // ),
 
           // Auto-scroll indicator
           if (_isAutoScrolling)

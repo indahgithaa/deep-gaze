@@ -672,16 +672,16 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
             isVisible: _eyeTrackingService.isTracking,
           ),
 
-          // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 1,
-            totalPages: 3,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
-          ),
+          // // Status information
+          // StatusInfoWidget(
+          //   statusMessage: _eyeTrackingService.statusMessage,
+          //   currentPage: 1,
+          //   totalPages: 3,
+          //   gazeX: _eyeTrackingService.gazeX,
+          //   gazeY: _eyeTrackingService.gazeY,
+          //   currentDwellingElement: _currentDwellingElement,
+          //   dwellProgress: _dwellProgress,
+          // ),
         ],
       ),
     );

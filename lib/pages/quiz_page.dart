@@ -902,16 +902,16 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
             isVisible: _eyeTrackingService.isTracking,
           ),
 
-          // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 3,
-            totalPages: 3,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
-          ),
+          // // Status information
+          // StatusInfoWidget(
+          //   statusMessage: _eyeTrackingService.statusMessage,
+          //   currentPage: 3,
+          //   totalPages: 3,
+          //   gazeX: _eyeTrackingService.gazeX,
+          //   gazeY: _eyeTrackingService.gazeY,
+          //   currentDwellingElement: _currentDwellingElement,
+          //   dwellProgress: _dwellProgress,
+          // ),
         ],
       ),
     );

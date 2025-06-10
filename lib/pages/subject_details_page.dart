@@ -718,16 +718,16 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage>
             gazeY: _eyeTrackingService.gazeY,
             isVisible: _eyeTrackingService.isTracking,
           ),
-          // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 2,
-            totalPages: 3,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
-          ),
+          // // Status information
+          // StatusInfoWidget(
+          //   statusMessage: _eyeTrackingService.statusMessage,
+          //   currentPage: 2,
+          //   totalPages: 3,
+          //   gazeX: _eyeTrackingService.gazeX,
+          //   gazeY: _eyeTrackingService.gazeY,
+          //   currentDwellingElement: _currentDwellingElement,
+          //   dwellProgress: _dwellProgress,
+          // ),
         ],
       ),
     );

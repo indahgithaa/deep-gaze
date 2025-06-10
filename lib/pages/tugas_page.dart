@@ -956,15 +956,15 @@ class _TugasPageState extends State<TugasPage> with ResponsiveBoundsMixin {
             isVisible: _eyeTrackingService.isTracking,
           ),
           // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 4,
-            totalPages: 4,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
-          ),
+          // StatusInfoWidget(
+          //   statusMessage: _eyeTrackingService.statusMessage,
+          //   currentPage: 4,
+          //   totalPages: 4,
+          //   gazeX: _eyeTrackingService.gazeX,
+          //   gazeY: _eyeTrackingService.gazeY,
+          //   currentDwellingElement: _currentDwellingElement,
+          //   dwellProgress: _dwellProgress,
+          // ),
         ],
       ),
     );
