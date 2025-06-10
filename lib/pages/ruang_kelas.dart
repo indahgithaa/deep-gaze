@@ -1,4 +1,4 @@
-// File: lib/pages/ruang_kelas_responsive.dart
+// File: lib/pages/ruang_kelas.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/subject.dart';
@@ -31,26 +31,27 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
   static const int _dwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
 
-  // Dynamic button boundaries using responsive bounds
-  Map<String, Rect> _buttonBounds = {};
+  // Override mixin configuration
+  @override
+  double get boundsUpdateDelay => 200.0; // Longer delay for ListView items
 
-  // GlobalKeys for each subject card
-  final Map<String, GlobalKey> _subjectKeys = {};
+  @override
+  bool get enableBoundsLogging => true;
 
   @override
   void initState() {
     super.initState();
-    print("DEBUG: RuangKelasResponsive initState - setting as active page");
+    print("DEBUG: RuangKelas initState - setting as active page");
     _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
 
-    // Initialize subject keys
+    // Initialize subject keys using mixin
     _initializeSubjectKeys();
 
     _eyeTrackingService.debugPrintStatus();
     _initializeEyeTracking();
 
-    // Calculate bounds after build
+    // Calculate bounds after build using mixin
     updateBoundsAfterBuild();
   }
 
@@ -60,30 +61,36 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     _dwellTimer?.cancel();
     _dwellTimer = null;
     _eyeTrackingService.removePage('ruang_kelas');
+
+    // Clean up mixin resources
     clearBounds();
-    print("DEBUG: RuangKelasResponsive disposed and removed from service");
+
+    print("DEBUG: RuangKelas disposed and removed from service");
     super.dispose();
   }
 
   void _initializeSubjectKeys() {
     final subjects = _getSubjects();
     for (final subject in subjects) {
-      _subjectKeys[subject.id] = generateKeyForElement(subject.id);
+      generateKeyForElement(subject.id);
     }
+    print("DEBUG: Generated ${elementCount} subject keys using mixin");
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change (like screen rotation)
+    updateBoundsAfterBuild();
   }
 
   void _onEyeTrackingUpdate() {
     if (_isDisposed || !mounted) return;
 
-    // Update bounds if they haven't been calculated yet
-    if (_buttonBounds.isEmpty) {
-      _buttonBounds = calculateScaledBounds();
-    }
-
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    // Use the responsive bounds mixin to find hovered element
+    // Use mixin's precise hit detection
     String? hoveredButton = getElementAtPoint(currentGazePoint);
 
     if (hoveredButton != null) {
@@ -93,11 +100,14 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
           (s) => s.id == hoveredButton,
           orElse: () => subjects.first,
         );
+        print("DEBUG: RuangKelas - Started dwelling on: $hoveredButton");
         _startDwellTimer(
             hoveredButton, () => _navigateToSubjectDetails(subject));
       }
     } else {
       if (_currentDwellingElement != null) {
+        print(
+            "DEBUG: RuangKelas - Stopped dwelling on: $_currentDwellingElement");
         _stopDwellTimer();
       }
     }
@@ -111,10 +121,9 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     if (_isDisposed || !mounted) return;
 
     try {
-      print("DEBUG: Initializing eye tracking di RuangKelasResponsive");
+      print("DEBUG: Initializing eye tracking in RuangKelas");
       await _eyeTrackingService.initialize(context);
-      print(
-          "DEBUG: Eye tracking berhasil diinisialisasi di RuangKelasResponsive");
+      print("DEBUG: Eye tracking successfully initialized in RuangKelas");
       _eyeTrackingService.debugPrintStatus();
     } catch (e) {
       print('Eye tracking initialization failed: $e');
@@ -129,13 +138,6 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
         );
       }
     }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Recalculate bounds when dependencies change (like screen rotation)
-    updateBoundsAfterBuild();
   }
 
   void _startDwellTimer(String elementId, VoidCallback action) {
@@ -215,7 +217,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     )
         .then((_) {
       if (!_isDisposed && mounted) {
-        print("DEBUG: Returned to RuangKelasResponsive, reactivating");
+        print("DEBUG: Returned to RuangKelas, reactivating");
         _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
         // Recalculate bounds when returning
         updateBoundsAfterBuild();
@@ -539,7 +541,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
 
                   const SizedBox(height: 30),
 
-                  // Subject Cards with responsive bounds
+                  // Subject Cards with responsive bounds using mixin
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -550,7 +552,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
                             _currentDwellingElement == subject.id;
 
                         return Container(
-                          key: _subjectKeys[subject.id], // Responsive key
+                          key: generateKeyForElement(subject.id), // Use mixin
                           margin: const EdgeInsets.only(bottom: 20),
                           child: Material(
                             elevation: isCurrentlyDwelling ? 8 : 4,
