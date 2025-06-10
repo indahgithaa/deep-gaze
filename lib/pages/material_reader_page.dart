@@ -130,14 +130,14 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
         setState(() {
           _isAutoScrolling = false;
         });
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Auto-scroll stopped'),
-            duration: Duration(seconds: 1),
-            backgroundColor: Colors.grey,
-          ),
-        );
+        // ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        // ScaffoldMessenger.of(context).showSnackBar(
+        //   const SnackBar(
+        //     content: Text('Auto-scroll stopped'),
+        //     duration: Duration(seconds: 1),
+        //     backgroundColor: Colors.grey,
+        //   ),
+        // );
       }
     }
   }
@@ -307,14 +307,14 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
       print("DEBUG: Auto-scroll stopped - user looked away from scroll zones");
 
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Auto-scroll stopped'),
-            duration: Duration(seconds: 1),
-            backgroundColor: Colors.grey,
-          ),
-        );
+        // ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        // ScaffoldMessenger.of(context).showSnackBar(
+        //   const SnackBar(
+        //     content: Text('Auto-scroll stopped'),
+        //     duration: Duration(seconds: 1),
+        //     backgroundColor: Colors.grey,
+        //   ),
+        // );
       }
     }
 
@@ -779,13 +779,15 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
   }
 
   String _getSampleContent() {
-    return '''Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+    return '''The simple past tense is used to describe actions that were completed in the past. It tells us about events that happened at a specific time that has already finished.
 
-Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+We form the simple past tense by adding -ed to regular verbs, but many common verbs are irregular and have special past tense forms that you need to memorize.
 
-Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
+For example:
+• Regular verbs: walk → walked, play → played, study → studied
+• Irregular verbs: go → went, eat → ate, see → saw, have → had
 
-Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.''';
+The simple past tense is very important in English because we use it constantly when telling stories, describing past experiences, or talking about completed actions.''';
   }
 
   @override
@@ -836,7 +838,7 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                         ),
                         const Expanded(
                           child: Text(
-                            'Material Reader',
+                            'Simple Past Tense',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w600,

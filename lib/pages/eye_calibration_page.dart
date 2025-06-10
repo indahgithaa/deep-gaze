@@ -233,7 +233,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             const MainAppScaffold(
-                initialIndex: 0), // Start with Home (RuangKelas)
+                initialIndex: 1), // Start with Home (RuangKelas)
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(
             opacity: animation,

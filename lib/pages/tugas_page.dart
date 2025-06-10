@@ -41,8 +41,8 @@ class _TugasPageState extends State<TugasPage> with ResponsiveBoundsMixin {
   // Question management
   int _currentQuestionIndex = 0;
   final List<String> _questions = [
-    "I ___ a mistake yesterday (do).",
-    "Last week, I ___ Julia (meet).",
+    "x + 8 = 14, x = ?",
+    "x : 4 = 2, x = ?",
     "What is 2 + 2?",
     "Write a short greeting.",
     "What day is today?"

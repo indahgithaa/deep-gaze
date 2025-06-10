@@ -450,20 +450,6 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage>
                             ),
                             if (topic.type == 'Materi') ...[
                               const SizedBox(width: 8),
-                              Icon(
-                                Icons.remove_red_eye,
-                                size: 16,
-                                color: Colors.green.shade600,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Eye Control',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.green.shade600,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
                             ],
                           ],
                         ),
@@ -473,38 +459,38 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage>
                   Column(
                     children: [
                       if (topic.isCompleted)
+                        //   Container(
+                        //     padding: const EdgeInsets.all(8),
+                        //     decoration: BoxDecoration(
+                        //       color: Colors.green.withOpacity(0.1),
+                        //       shape: BoxShape.circle,
+                        //     ),
+                        //     child: const Icon(
+                        //       Icons.check,
+                        //       color: Colors.green,
+                        //       size: 20,
+                        //     ),
+                        //   ),
+                        // const SizedBox(height: 8),
+                        // Type-specific action hint
                         Container(
-                          padding: const EdgeInsets.all(8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.1),
-                            shape: BoxShape.circle,
+                            color: iconColor.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Icon(
-                            Icons.check,
-                            color: Colors.green,
-                            size: 20,
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                      // Type-specific action hint
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: iconColor.withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          _getActionHint(topic.type),
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: iconColor,
-                            fontWeight: FontWeight.w500,
+                          child: Text(
+                            _getActionHint(topic.type),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: iconColor,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ],
@@ -521,9 +507,9 @@ class _SubjectDetailsPageState extends State<SubjectDetailsPage>
       case 'Materi':
         return 'Read';
       case 'Tugas':
-        return 'Type';
+        return 'Essay';
       case 'Kuis':
-        return 'Answer';
+        return 'Options';
       default:
         return 'Open';
     }
