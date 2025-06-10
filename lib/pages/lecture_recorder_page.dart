@@ -1,12 +1,13 @@
 // File: lib/pages/lecture_recorder_page.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:io';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'dart:math';
 import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../mixins/responsive_bounds_mixin.dart';
+import '../models/lecture_note.dart';
+import 'saved_notes_page.dart';
 
 class LectureRecorderPage extends StatefulWidget {
   const LectureRecorderPage({super.key});
@@ -16,11 +17,9 @@ class LectureRecorderPage extends StatefulWidget {
 }
 
 class _LectureRecorderPageState extends State<LectureRecorderPage>
-    with TickerProviderStateMixin, ResponsiveBoundsMixin {
+    with ResponsiveBoundsMixin, TickerProviderStateMixin {
   late GlobalSeesoService _eyeTrackingService;
-  late stt.SpeechToText _speech;
   bool _isDisposed = false;
-  bool _isInitialized = false;
 
   // Dwell time selection state
   String? _currentDwellingElement;
@@ -28,28 +27,80 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   Timer? _dwellTimer;
   DateTime? _dwellStartTime;
 
-  // Dwell time configuration - 1.5 seconds
-  static const int _dwellTimeMs = 1500;
+  // Dwell time configuration
+  static const int _controlDwellTimeMs = 1000;
+  static const int _buttonDwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
 
   // Recording state
   bool _isRecording = false;
-  bool _speechAvailable = false;
-  bool _speechEnabled = false;
-  String _transcribedText = '';
-  String _currentWords = '';
-  Timer? _recordingTimer;
+  bool _isPaused = false;
   Duration _recordingDuration = Duration.zero;
+  Timer? _recordingTimer;
+  DateTime? _recordingStartTime;
+
+  // Speech-to-text simulation
+  String _transcriptionText = '';
+  Timer? _transcriptionTimer;
+  final List<String> _sampleWords = [
+    'Today',
+    'we',
+    'will',
+    'discuss',
+    'the',
+    'fundamental',
+    'concepts',
+    'of',
+    'mathematics',
+    'including',
+    'algebra',
+    'geometry',
+    'and',
+    'calculus',
+    'These',
+    'topics',
+    'are',
+    'essential',
+    'for',
+    'understanding',
+    'advanced',
+    'mathematical',
+    'principles',
+    'Let',
+    'us',
+    'begin',
+    'with',
+    'basic',
+    'equations',
+    'and',
+    'their',
+    'solutions',
+    'Remember',
+    'to',
+    'take',
+    'notes',
+    'and',
+    'ask',
+    'questions',
+    'if',
+    'anything',
+    'is',
+    'unclear',
+    'Practice',
+    'makes',
+    'perfect',
+    'in',
+    'mathematics',
+    'education'
+  ];
+  int _currentWordIndex = 0;
+
+  // Saved notes
+  final List<LectureNote> _savedNotes = [];
 
   // Animation controllers
   late AnimationController _pulseController;
-  late AnimationController _waveController;
   late Animation<double> _pulseAnimation;
-  late Animation<double> _waveAnimation;
-
-  // Notes storage
-  final List<LectureNote> _savedNotes = [];
-  final ScrollController _scrollController = ScrollController();
 
   // Override mixin configuration
   @override
@@ -62,20 +113,14 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   void initState() {
     super.initState();
     print("DEBUG: LectureRecorderPage initState");
-
     _eyeTrackingService = GlobalSeesoService();
-    _speech = stt.SpeechToText();
+    _eyeTrackingService.setActivePage('lecture_recorder', _onEyeTrackingUpdate);
 
-    // Initialize animations
+    // Initialize animation
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
-    _waveController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-
     _pulseAnimation = Tween<double>(
       begin: 1.0,
       end: 1.2,
@@ -84,37 +129,21 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       curve: Curves.easeInOut,
     ));
 
-    _waveAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _waveController,
-      curve: Curves.easeInOut,
-    ));
-
-    // Initialize element keys using mixin
     _initializeElementKeys();
-
-    // Delay initialization until after the first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_isDisposed && mounted) {
-        _initializeAsync();
-      }
-    });
+    _initializeEyeTracking();
+    updateBoundsAfterBuild();
   }
 
   void _initializeElementKeys() {
-    // Generate keys for all interactive elements using the mixin
-    generateKeyForElement('back_button');
+    // Generate keys for recording controls
     generateKeyForElement('record_button');
+    generateKeyForElement('pause_button');
     generateKeyForElement('stop_button');
-    generateKeyForElement('notes_button');
-    generateKeyForElement('save_note_button');
+    generateKeyForElement('save_button');
+    generateKeyForElement('clear_button');
+    generateKeyForElement('saved_notes_button');
 
     print("DEBUG: Generated ${elementCount} element keys using mixin");
-
-    // Calculate bounds after build using mixin
-    updateBoundsAfterBuild();
   }
 
   @override
@@ -122,13 +151,10 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     _isDisposed = true;
     _dwellTimer?.cancel();
     _recordingTimer?.cancel();
+    _transcriptionTimer?.cancel();
     _pulseController.dispose();
-    _waveController.dispose();
-    _scrollController.dispose();
 
     _eyeTrackingService.removePage('lecture_recorder');
-
-    // Clean up mixin resources
     clearBounds();
 
     print("DEBUG: LectureRecorderPage disposed");
@@ -138,70 +164,21 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Recalculate bounds when dependencies change
     updateBoundsAfterBuild();
   }
 
-  Future<void> _initializeAsync() async {
-    if (_isDisposed || !mounted) return;
-
-    try {
-      _eyeTrackingService.setActivePage(
-          'lecture_recorder', _onEyeTrackingUpdate);
-      await _initializeEyeTracking();
-      await _initializeSpeech();
-
-      setState(() {
-        _isInitialized = true;
-      });
-
-      print("DEBUG: LectureRecorderPage initialization complete");
-    } catch (e) {
-      print("DEBUG: LectureRecorderPage initialization error: $e");
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-      }
-    }
-  }
-
   void _onEyeTrackingUpdate() {
-    if (_isDisposed || !mounted || !_isInitialized) return;
+    if (_isDisposed || !mounted) return;
 
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    // IMPROVED: Use mixin's precise hit detection
     String? hoveredElement = getElementAtPoint(currentGazePoint);
-
-    // FIXED: Check only relevant buttons based on recording state
-    if (_isRecording) {
-      // When recording, only check stop button, back button, notes button
-      final activeButtons = ['stop_button', 'back_button', 'notes_button'];
-      if (_transcribedText.isNotEmpty) {
-        activeButtons.add('save_note_button');
-      }
-
-      if (hoveredElement != null && !activeButtons.contains(hoveredElement)) {
-        hoveredElement = null; // Ignore non-active buttons
-      }
-    } else {
-      // When not recording, only check record button, back button, notes button
-      final activeButtons = ['record_button', 'back_button', 'notes_button'];
-      if (_transcribedText.isNotEmpty) {
-        activeButtons.add('save_note_button');
-      }
-
-      if (hoveredElement != null && !activeButtons.contains(hoveredElement)) {
-        hoveredElement = null; // Ignore non-active buttons
-      }
-    }
 
     if (hoveredElement != null) {
       if (_currentDwellingElement != hoveredElement) {
         print(
-            "DEBUG: Hovering over: $hoveredElement (recording: $_isRecording)");
+            "DEBUG: LectureRecorderPage - Started dwelling on: $hoveredElement");
         _handleElementHover(hoveredElement);
       }
     } else {
@@ -217,42 +194,58 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
   void _handleElementHover(String elementId) {
     VoidCallback action;
+    int dwellTime = _buttonDwellTimeMs;
 
     switch (elementId) {
-      case 'back_button':
-        action = _goBack;
-        break;
       case 'record_button':
         if (!_isRecording) {
           action = _startRecording;
+          dwellTime = _controlDwellTimeMs;
         } else {
-          return; // Should not happen due to filtering in _onEyeTrackingUpdate
+          return; // Don't allow starting when already recording
+        }
+        break;
+      case 'pause_button':
+        if (_isRecording && !_isPaused) {
+          action = _pauseRecording;
+          dwellTime = _controlDwellTimeMs;
+        } else if (_isRecording && _isPaused) {
+          action = _resumeRecording;
+          dwellTime = _controlDwellTimeMs;
+        } else {
+          return;
         }
         break;
       case 'stop_button':
         if (_isRecording) {
           action = _stopRecording;
-          print("DEBUG: Stop button action assigned");
+          dwellTime = _controlDwellTimeMs;
         } else {
-          return; // Should not happen due to filtering in _onEyeTrackingUpdate
+          return;
         }
         break;
-      case 'notes_button':
-        action = _showNotes;
-        break;
-      case 'save_note_button':
-        if (_transcribedText.isNotEmpty) {
+      case 'save_button':
+        if (!_isRecording && _transcriptionText.isNotEmpty) {
           action = _saveNote;
         } else {
           return;
         }
         break;
+      case 'clear_button':
+        if (!_isRecording) {
+          action = _clearTranscription;
+        } else {
+          return;
+        }
+        break;
+      case 'saved_notes_button':
+        action = _navigateToSavedNotes;
+        break;
       default:
-        print("DEBUG: Unknown element: $elementId");
         return;
     }
 
-    _startDwellTimer(elementId, action);
+    _startDwellTimer(elementId, action, dwellTime);
   }
 
   Future<void> _initializeEyeTracking() async {
@@ -278,42 +271,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     }
   }
 
-  Future<void> _initializeSpeech() async {
-    try {
-      _speechAvailable = await _speech.initialize(
-        onStatus: (status) {
-          print('Speech status: $status');
-          if (mounted) {
-            setState(() {
-              _speechEnabled = status == 'listening';
-            });
-          }
-        },
-        onError: (error) {
-          print('Speech error: $error');
-          if (mounted) {
-            setState(() {
-              _speechEnabled = false;
-            });
-          }
-        },
-      );
-
-      if (mounted) {
-        setState(() {});
-      }
-
-      print('Speech to text available: $_speechAvailable');
-    } catch (e) {
-      print('Speech initialization error: $e');
-      _speechAvailable = false;
-      if (mounted) {
-        setState(() {});
-      }
-    }
-  }
-
-  void _startDwellTimer(String elementId, VoidCallback action) {
+  void _startDwellTimer(
+      String elementId, VoidCallback action, int dwellTimeMs) {
     if (_isDisposed || !mounted) return;
     if (_currentDwellingElement == elementId) return;
 
@@ -326,7 +285,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       });
     }
 
-    print("DEBUG: Starting dwell timer for: $elementId");
     _dwellStartTime = DateTime.now();
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
@@ -338,7 +296,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
         final elapsed =
             DateTime.now().difference(_dwellStartTime!).inMilliseconds;
-        final progress = (elapsed / _dwellTimeMs).clamp(0.0, 1.0);
+        final progress = (elapsed / dwellTimeMs).clamp(0.0, 1.0);
 
         if (mounted && !_isDisposed) {
           setState(() {
@@ -348,8 +306,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
         if (progress >= 1.0) {
           timer.cancel();
-          print(
-              "DEBUG: Dwell timer completed for: $elementId, executing action");
           if (mounted && !_isDisposed) {
             action();
           }
@@ -361,7 +317,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   void _stopDwellTimer() {
     _dwellTimer?.cancel();
     _dwellTimer = null;
-
     if (mounted && !_isDisposed) {
       setState(() {
         _currentDwellingElement = null;
@@ -370,104 +325,82 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     }
   }
 
-  void _goBack() {
-    if (_isDisposed || !mounted) return;
-    _stopDwellTimer();
-
-    if (_isRecording) {
-      _stopRecording();
-    }
-
-    Navigator.of(context).pop();
-  }
-
   void _startRecording() {
     if (_isDisposed || !mounted || _isRecording) return;
     _stopDwellTimer();
 
-    print("DEBUG: Starting recording...");
-
-    if (!_speechAvailable) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Speech recognition not available - Recording simulation mode'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
-
     setState(() {
       _isRecording = true;
+      _isPaused = false;
       _recordingDuration = Duration.zero;
-      _transcribedText = '';
-      _currentWords = '';
+      _transcriptionText = '';
+      _currentWordIndex = 0;
     });
 
-    // Start animations
-    _pulseController.repeat(reverse: true);
-    _waveController.repeat(reverse: true);
+    _recordingStartTime = DateTime.now();
 
     // Start recording timer
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!_isRecording) {
-        timer.cancel();
-        return;
+      if (!_isRecording || _isPaused) return;
+
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _recordingDuration = DateTime.now().difference(_recordingStartTime!);
+        });
       }
-      setState(() {
-        _recordingDuration =
-            Duration(seconds: _recordingDuration.inSeconds + 1);
-      });
     });
 
-    // Start speech recognition if available
-    if (_speechAvailable) {
-      _speech.listen(
-        onResult: (result) {
-          if (mounted && _isRecording) {
-            setState(() {
-              _transcribedText = result.recognizedWords;
-              _currentWords = result.recognizedWords;
-            });
-          }
-        },
-        listenFor: const Duration(minutes: 30),
-        pauseFor: const Duration(seconds: 3),
-        partialResults: true,
-        localeId: 'id_ID',
-      );
-    } else {
-      // Simulation mode
-      Timer.periodic(const Duration(seconds: 3), (timer) {
-        if (!_isRecording || _isDisposed) {
-          timer.cancel();
-          return;
-        }
+    // Start transcription simulation
+    _startTranscriptionSimulation();
 
-        final sampleTexts = [
-          "Hari ini kita akan mempelajari tentang matematika dasar.",
-          "Perhatikan contoh soal yang ada di papan tulis.",
-          "Siapa yang bisa menjawab pertanyaan ini?",
-          "Mari kita lanjutkan ke materi selanjutnya.",
-        ];
-
-        if (mounted) {
-          setState(() {
-            _transcribedText +=
-                " " + sampleTexts[timer.tick % sampleTexts.length];
-          });
-        }
-      });
-    }
+    // Start pulse animation
+    _pulseController.repeat(reverse: true);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_speechAvailable
-            ? 'Recording started!'
-            : 'Recording started in simulation mode!'),
+      const SnackBar(
+        content: Text('Recording started'),
         backgroundColor: Colors.green,
-        duration: const Duration(seconds: 2),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _pauseRecording() {
+    if (_isDisposed || !mounted || !_isRecording || _isPaused) return;
+    _stopDwellTimer();
+
+    setState(() {
+      _isPaused = true;
+    });
+
+    _transcriptionTimer?.cancel();
+    _pulseController.stop();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Recording paused'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _resumeRecording() {
+    if (_isDisposed || !mounted || !_isRecording || !_isPaused) return;
+    _stopDwellTimer();
+
+    setState(() {
+      _isPaused = false;
+    });
+
+    _startTranscriptionSimulation();
+    _pulseController.repeat(reverse: true);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Recording resumed'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 1),
       ),
     );
   }
@@ -476,73 +409,125 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     if (_isDisposed || !mounted || !_isRecording) return;
     _stopDwellTimer();
 
-    print("DEBUG: Stopping recording...");
-
     setState(() {
       _isRecording = false;
-      _speechEnabled = false;
+      _isPaused = false;
     });
 
-    // Stop animations
-    _pulseController.stop();
-    _waveController.stop();
-
-    // Stop timers
     _recordingTimer?.cancel();
-    _recordingTimer = null;
-
-    // Stop speech recognition
-    if (_speechAvailable) {
-      _speech.stop();
-    }
+    _transcriptionTimer?.cancel();
+    _pulseController.stop();
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-            'Recording stopped! Duration: ${_formatDuration(_recordingDuration)}'),
-        backgroundColor: Colors.blue,
-        duration: const Duration(seconds: 3),
+      const SnackBar(
+        content: Text('Recording stopped'),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 1),
       ),
     );
   }
 
+  void _startTranscriptionSimulation() {
+    _transcriptionTimer = Timer.periodic(
+      Duration(
+          milliseconds: 800 + Random().nextInt(1200)), // 0.8-2.0s intervals
+      (timer) {
+        if (!_isRecording || _isPaused || _isDisposed || !mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (_currentWordIndex < _sampleWords.length) {
+          setState(() {
+            if (_transcriptionText.isNotEmpty) {
+              _transcriptionText += ' ';
+            }
+            _transcriptionText += _sampleWords[_currentWordIndex];
+            _currentWordIndex++;
+          });
+        } else {
+          timer.cancel();
+        }
+      },
+    );
+  }
+
   void _saveNote() {
-    if (_isDisposed || !mounted || _transcribedText.isEmpty) return;
+    if (_isDisposed || !mounted || _transcriptionText.isEmpty) return;
     _stopDwellTimer();
 
     final note = LectureNote(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: 'Lecture ${_savedNotes.length + 1}',
-      content: _transcribedText,
+      title:
+          'Lecture ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+      content: _transcriptionText,
       duration: _recordingDuration,
       timestamp: DateTime.now(),
     );
 
     setState(() {
       _savedNotes.add(note);
-      _transcribedText = '';
-      _recordingDuration = Duration.zero;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Note saved successfully!'),
+        content: Text('Note saved successfully'),
         backgroundColor: Colors.green,
         duration: Duration(seconds: 2),
       ),
     );
   }
 
-  void _showNotes() {
+  void _clearTranscription() {
+    if (_isDisposed || !mounted || _isRecording) return;
+    _stopDwellTimer();
+
+    setState(() {
+      _transcriptionText = '';
+      _recordingDuration = Duration.zero;
+      _currentWordIndex = 0;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Transcription cleared'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _navigateToSavedNotes() {
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _buildNotesModal(),
-    );
+    // Don't navigate if currently recording
+    if (_isRecording) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Stop recording before accessing saved notes'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    _eyeTrackingService.removePage('lecture_recorder');
+
+    Navigator.of(context)
+        .push(
+      MaterialPageRoute(
+        builder: (context) => SavedNotesPage(savedNotes: _savedNotes),
+      ),
+    )
+        .then((_) {
+      if (!_isDisposed && mounted) {
+        _eyeTrackingService.setActivePage(
+            'lecture_recorder', _onEyeTrackingUpdate);
+        updateBoundsAfterBuild();
+      }
+    });
   }
 
   String _formatDuration(Duration duration) {
@@ -553,258 +538,81 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     return '$hours:$minutes:$seconds';
   }
 
-  Widget _buildRecordButton() {
-    // FIXED: Show record button only when not recording
-    if (_isRecording) return const SizedBox.shrink();
-
-    final isCurrentlyDwelling = _currentDwellingElement == 'record_button';
-
-    return AnimatedBuilder(
-      animation: const AlwaysStoppedAnimation(1.0),
-      builder: (context, child) {
-        return Transform.scale(
-          scale: isCurrentlyDwelling ? 1.1 : 1.0,
-          child: Container(
-            key: generateKeyForElement('record_button'), // Use mixin
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.blue.shade600,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.blue.withOpacity(0.4),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: Stack(
-              children: [
-                if (isCurrentlyDwelling)
-                  Positioned.fill(
-                    child: CircularProgressIndicator(
-                      value: _dwellProgress,
-                      strokeWidth: 4,
-                      backgroundColor: Colors.white.withOpacity(0.3),
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  ),
-                const Center(
-                  child: Icon(
-                    Icons.mic,
-                    size: 48,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildStopButton() {
-    // FIXED: Show stop button only when recording
-    if (!_isRecording) return const SizedBox.shrink();
-
-    final isCurrentlyDwelling = _currentDwellingElement == 'stop_button';
-
-    return AnimatedBuilder(
-      animation: _pulseAnimation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: _pulseAnimation.value * (isCurrentlyDwelling ? 1.1 : 1.0),
-          child: Container(
-            key: generateKeyForElement('stop_button'), // Use mixin
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.red.shade600,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.red.withOpacity(0.4),
-                  blurRadius: 20,
-                  spreadRadius: 5,
-                ),
-              ],
-            ),
-            child: Stack(
-              children: [
-                if (isCurrentlyDwelling)
-                  Positioned.fill(
-                    child: CircularProgressIndicator(
-                      value: _dwellProgress,
-                      strokeWidth: 4,
-                      backgroundColor: Colors.white.withOpacity(0.3),
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  ),
-                const Center(
-                  child: Icon(
-                    Icons.stop,
-                    size: 48,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildTranscriptionBox() {
-    return Container(
-      margin: const EdgeInsets.all(20),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade300,
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.transcribe, color: Colors.blue.shade600),
-              const SizedBox(width: 8),
-              const Text(
-                'Live Transcription',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Spacer(),
-              if (_isRecording)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.red.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatDuration(_recordingDuration),
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            height: 150,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Scrollbar(
-              child: SingleChildScrollView(
-                child: Text(
-                  _transcribedText.isEmpty
-                      ? (_isRecording
-                          ? 'Listening... Start speaking to see transcription here.'
-                          : 'Press the record button to start recording.')
-                      : _transcribedText,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: _transcribedText.isEmpty
-                        ? Colors.grey.shade500
-                        : Colors.black87,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (_transcribedText.isNotEmpty && !_isRecording) ...[
-            const SizedBox(height: 12),
-            _buildSaveNoteButton(),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSaveNoteButton() {
-    final isCurrentlyDwelling = _currentDwellingElement == 'save_note_button';
+  Widget _buildControlButton({
+    required String elementId,
+    required IconData icon,
+    required String label,
+    required Color color,
+    required bool isEnabled,
+    double size = 80.0,
+  }) {
+    final isCurrentlyDwelling = _currentDwellingElement == elementId;
+    final key = generateKeyForElement(elementId);
 
     return Container(
-      key: generateKeyForElement('save_note_button'), // Use mixin
-      width: double.infinity,
-      height: 50,
+      key: key,
+      width: size,
+      height: size,
+      margin: const EdgeInsets.all(8),
       child: Material(
-        elevation: isCurrentlyDwelling ? 4 : 2,
-        borderRadius: BorderRadius.circular(8),
+        elevation: isCurrentlyDwelling ? 8 : (isEnabled ? 4 : 1),
+        borderRadius: BorderRadius.circular(size / 2),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: isCurrentlyDwelling
-                ? Colors.green.shade700
-                : Colors.green.shade600,
+            borderRadius: BorderRadius.circular(size / 2),
+            color: isEnabled
+                ? (isCurrentlyDwelling ? color.withOpacity(0.8) : color)
+                : Colors.grey.shade300,
+            border: Border.all(
+              color: isCurrentlyDwelling
+                  ? Colors.white
+                  : (isEnabled ? color.withOpacity(0.5) : Colors.grey.shade400),
+              width: 2,
+            ),
           ),
           child: Stack(
             children: [
-              if (isCurrentlyDwelling)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  child: Container(
-                    height: 3,
-                    width: (MediaQuery.of(context).size.width - 40) *
-                        _dwellProgress,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+              if (isCurrentlyDwelling && isEnabled)
+                Positioned.fill(
+                  child: CircularProgressIndicator(
+                    value: _dwellProgress,
+                    strokeWidth: 3,
+                    backgroundColor: Colors.white.withOpacity(0.3),
+                    valueColor:
+                        const AlwaysStoppedAnimation<Color>(Colors.white),
                   ),
                 ),
-              const Center(
-                child: Row(
+              Center(
+                child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.save, color: Colors.white),
-                    SizedBox(width: 8),
+                    AnimatedBuilder(
+                      animation: _pulseAnimation,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: (_isRecording &&
+                                  elementId == 'record_button' &&
+                                  !_isPaused)
+                              ? _pulseAnimation.value
+                              : 1.0,
+                          child: Icon(
+                            icon,
+                            color:
+                                isEnabled ? Colors.white : Colors.grey.shade600,
+                            size: size * 0.35,
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 4),
                     Text(
-                      'Save Note',
+                      label,
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                        color: isEnabled ? Colors.white : Colors.grey.shade600,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
                       ),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
@@ -816,162 +624,262 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     );
   }
 
-  Widget _buildNotesModal() {
+  Widget _buildStatusCard() {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.8,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
+      margin: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _isRecording
+            ? (_isPaused ? Colors.orange.shade50 : Colors.green.shade50)
+            : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _isRecording
+              ? (_isPaused ? Colors.orange.shade300 : Colors.green.shade300)
+              : Colors.grey.shade300,
+          width: 2,
         ),
       ),
       child: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade600,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
+          Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: _isRecording
+                      ? (_isPaused ? Colors.orange : Colors.green)
+                      : Colors.grey,
+                  shape: BoxShape.circle,
+                ),
               ),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.note, color: Colors.white),
-                const SizedBox(width: 8),
-                const Text(
-                  'Saved Notes',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+              const SizedBox(width: 12),
+              Text(
+                _isRecording
+                    ? (_isPaused ? 'Recording Paused' : 'Recording Active')
+                    : 'Ready to Record',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: _isRecording
+                      ? (_isPaused
+                          ? Colors.orange.shade800
+                          : Colors.green.shade800)
+                      : Colors.grey.shade700,
                 ),
-                const Spacer(),
-                Text(
-                  '${_savedNotes.length} notes',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Expanded(
-            child: _savedNotes.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.note_add, size: 64, color: Colors.grey),
-                        SizedBox(height: 16),
-                        Text(
-                          'No notes saved yet',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          'Record a lecture to create your first note',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Duration',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    itemCount: _savedNotes.length,
-                    itemBuilder: (context, index) {
-                      final note = _savedNotes[index];
-                      return Container(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  note.title,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  _formatDuration(note.duration),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${note.timestamp.day}/${note.timestamp.month}/${note.timestamp.year} '
-                              '${note.timestamp.hour.toString().padLeft(2, '0')}:'
-                              '${note.timestamp.minute.toString().padLeft(2, '0')}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              note.content,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                height: 1.4,
-                              ),
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                    Text(
+                      _formatDuration(_recordingDuration),
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Words Transcribed',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      '${_transcriptionText.split(' ').where((word) => word.isNotEmpty).length}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
+  Widget _buildTranscriptionArea() {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Live Transcription',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  key: generateKeyForElement('saved_notes_button'),
+                  child: Material(
+                    elevation:
+                        _currentDwellingElement == 'saved_notes_button' ? 4 : 2,
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        color: _currentDwellingElement == 'saved_notes_button'
+                            ? Colors.blue.shade50
+                            : Colors.white,
+                        border: Border.all(
+                          color: _currentDwellingElement == 'saved_notes_button'
+                              ? Colors.blue.shade300
+                              : Colors.grey.shade300,
+                        ),
+                      ),
+                      child: Stack(
+                        children: [
+                          if (_currentDwellingElement == 'saved_notes_button')
+                            Positioned(
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              child: Container(
+                                height: 2,
+                                child: LinearProgressIndicator(
+                                  value: _dwellProgress,
+                                  backgroundColor: Colors.transparent,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.blue.shade600),
+                                ),
+                              ),
+                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.folder,
+                                size: 16,
+                                color: _currentDwellingElement ==
+                                        'saved_notes_button'
+                                    ? Colors.blue.shade600
+                                    : Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Saved Notes (${_savedNotes.length})',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: _currentDwellingElement ==
+                                          'saved_notes_button'
+                                      ? Colors.blue.shade600
+                                      : Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.shade200,
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: SingleChildScrollView(
+                  child: Text(
+                    _transcriptionText.isEmpty
+                        ? 'Transcription will appear here when recording starts...'
+                        : _transcriptionText,
+                    style: TextStyle(
+                      fontSize: 16,
+                      height: 1.5,
+                      color: _transcriptionText.isEmpty
+                          ? Colors.grey.shade500
+                          : Colors.black87,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildControlButton(
+                    elementId: 'save_button',
+                    icon: Icons.save,
+                    label: 'Save',
+                    color: Colors.green,
+                    isEnabled: !_isRecording && _transcriptionText.isNotEmpty,
+                    size: 60,
+                  ),
+                ),
+                Expanded(
+                  child: _buildControlButton(
+                    elementId: 'clear_button',
+                    icon: Icons.clear,
+                    label: 'Clear',
+                    color: Colors.orange,
+                    isEnabled: !_isRecording,
+                    size: 60,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized) {
-      return const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Initializing Lecture Recorder...'),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       body: Stack(
         children: [
@@ -981,8 +889,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Color(0xFF6366F1),
-                  Color(0xFF8B5CF6),
+                  Color(0xFF667EEA),
+                  Color(0xFF764BA2),
                 ],
               ),
             ),
@@ -994,21 +902,16 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                     padding: const EdgeInsets.all(20),
                     child: Row(
                       children: [
-                        GestureDetector(
-                          key:
-                              generateKeyForElement('back_button'), // Use mixin
-                          onTap: _goBack,
-                          child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.arrow_back,
-                              color: Colors.white,
-                              size: 20,
-                            ),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.menu,
+                            color: Colors.white,
+                            size: 20,
                           ),
                         ),
                         const Expanded(
@@ -1022,104 +925,22 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                             textAlign: TextAlign.center,
                           ),
                         ),
-                        GestureDetector(
-                          key: generateKeyForElement(
-                              'notes_button'), // Use mixin
-                          onTap: _showNotes,
-                          child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Stack(
-                              children: [
-                                const Icon(
-                                  Icons.note,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                                if (_savedNotes.isNotEmpty)
-                                  Positioned(
-                                    right: -2,
-                                    top: -2,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: const BoxDecoration(
-                                        color: Colors.red,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      constraints: const BoxConstraints(
-                                        minWidth: 16,
-                                        minHeight: 16,
-                                      ),
-                                      child: Text(
-                                        '${_savedNotes.length}',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.visibility,
+                            color: Colors.blue,
+                            size: 20,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  // Status indicators
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 20),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _speechAvailable ? Icons.mic : Icons.mic_off,
-                          color: _speechAvailable ? Colors.green : Colors.red,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _speechAvailable
-                              ? 'Speech Recognition Ready'
-                              : 'Speech Recognition Unavailable',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                          ),
-                        ),
-                        const Spacer(),
-                        if (_isRecording) ...[
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'REC ${_formatDuration(_recordingDuration)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 40),
+
                   // Main content area
                   Expanded(
                     child: Container(
@@ -1132,39 +953,49 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                       ),
                       child: Column(
                         children: [
-                          const SizedBox(height: 40),
-                          // Record/Stop button area - FIXED: Show appropriate button
-                          SizedBox(
-                            height: 200,
-                            child: Center(
-                              child: Stack(
-                                children: [
-                                  _buildRecordButton(),
-                                  _buildStopButton(),
-                                ],
-                              ),
+                          // Recording status
+                          _buildStatusCard(),
+
+                          // Recording controls
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                _buildControlButton(
+                                  elementId: 'record_button',
+                                  icon: _isRecording
+                                      ? Icons.fiber_manual_record
+                                      : Icons.mic,
+                                  label: _isRecording ? 'Recording' : 'Record',
+                                  color:
+                                      _isRecording ? Colors.red : Colors.green,
+                                  isEnabled: !_isRecording,
+                                ),
+                                _buildControlButton(
+                                  elementId: 'pause_button',
+                                  icon: _isPaused
+                                      ? Icons.play_arrow
+                                      : Icons.pause,
+                                  label: _isPaused ? 'Resume' : 'Pause',
+                                  color: Colors.orange,
+                                  isEnabled: _isRecording,
+                                ),
+                                _buildControlButton(
+                                  elementId: 'stop_button',
+                                  icon: Icons.stop,
+                                  label: 'Stop',
+                                  color: Colors.red,
+                                  isEnabled: _isRecording,
+                                ),
+                              ],
                             ),
                           ),
-                          // Instructions
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 40),
-                            child: Text(
-                              _isRecording
-                                  ? 'Look at the red stop button for 1.5 seconds to stop recording'
-                                  : 'Look at the blue record button for 1.5 seconds to start recording',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey.shade600,
-                                height: 1.4,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
+
                           const SizedBox(height: 20),
-                          // Transcription box
-                          Expanded(
-                            child: _buildTranscriptionBox(),
-                          ),
+
+                          // Transcription area
+                          _buildTranscriptionArea(),
                         ],
                       ),
                     ),
@@ -1173,17 +1004,19 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
               ),
             ),
           ),
+
           // Gaze point indicator
           GazePointWidget(
             gazeX: _eyeTrackingService.gazeX,
             gazeY: _eyeTrackingService.gazeY,
             isVisible: _eyeTrackingService.isTracking,
           ),
+
           // Status information
           StatusInfoWidget(
             statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 5,
-            totalPages: 5,
+            currentPage: 2,
+            totalPages: 3,
             gazeX: _eyeTrackingService.gazeX,
             gazeY: _eyeTrackingService.gazeY,
             currentDwellingElement: _currentDwellingElement,
@@ -1191,43 +1024,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
           ),
         ],
       ),
-    );
-  }
-}
-
-// Data model for lecture notes
-class LectureNote {
-  final String id;
-  final String title;
-  final String content;
-  final Duration duration;
-  final DateTime timestamp;
-
-  LectureNote({
-    required this.id,
-    required this.title,
-    required this.content,
-    required this.duration,
-    required this.timestamp,
-  });
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-      'content': content,
-      'duration': duration.inSeconds,
-      'timestamp': timestamp.toIso8601String(),
-    };
-  }
-
-  factory LectureNote.fromJson(Map<String, dynamic> json) {
-    return LectureNote(
-      id: json['id'],
-      title: json['title'],
-      content: json['content'],
-      duration: Duration(seconds: json['duration']),
-      timestamp: DateTime.parse(json['timestamp']),
     );
   }
 }

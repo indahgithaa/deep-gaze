@@ -5,8 +5,6 @@ class LectureNote {
   final String content;
   final Duration duration;
   final DateTime timestamp;
-  final List<String> tags;
-  final String? audioFilePath;
 
   LectureNote({
     required this.id,
@@ -14,85 +12,67 @@ class LectureNote {
     required this.content,
     required this.duration,
     required this.timestamp,
-    this.tags = const [],
-    this.audioFilePath,
   });
 
-  // Convert to JSON
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'title': title,
       'content': content,
-      'duration': duration.inMilliseconds,
+      'duration': duration.inSeconds,
       'timestamp': timestamp.toIso8601String(),
-      'tags': tags,
-      'audioFilePath': audioFilePath,
     };
   }
 
-  // Create from JSON
   factory LectureNote.fromJson(Map<String, dynamic> json) {
     return LectureNote(
       id: json['id'],
       title: json['title'],
       content: json['content'],
-      duration: Duration(milliseconds: json['duration']),
+      duration: Duration(seconds: json['duration']),
       timestamp: DateTime.parse(json['timestamp']),
-      tags: List<String>.from(json['tags'] ?? []),
-      audioFilePath: json['audioFilePath'],
     );
   }
 
-  // Create a copy with updated fields
+  // Create a copy with modified fields
   LectureNote copyWith({
+    String? id,
     String? title,
     String? content,
     Duration? duration,
     DateTime? timestamp,
-    List<String>? tags,
-    String? audioFilePath,
   }) {
     return LectureNote(
-      id: id,
+      id: id ?? this.id,
       title: title ?? this.title,
       content: content ?? this.content,
       duration: duration ?? this.duration,
       timestamp: timestamp ?? this.timestamp,
-      tags: tags ?? this.tags,
-      audioFilePath: audioFilePath ?? this.audioFilePath,
     );
   }
 
-  // Get formatted duration string
-  String get formattedDuration {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigits(duration.inHours);
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-
-    if (duration.inHours > 0) {
-      return '$hours:$minutes:$seconds';
-    } else {
-      return '$minutes:$seconds';
-    }
+  @override
+  String toString() {
+    return 'LectureNote(id: $id, title: $title, duration: $duration, timestamp: $timestamp)';
   }
 
-  // Get formatted timestamp
-  String get formattedTimestamp {
-    return '${timestamp.day}/${timestamp.month}/${timestamp.year} '
-        '${timestamp.hour.toString().padLeft(2, '0')}:'
-        '${timestamp.minute.toString().padLeft(2, '0')}';
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is LectureNote &&
+        other.id == id &&
+        other.title == title &&
+        other.content == content &&
+        other.duration == duration &&
+        other.timestamp == timestamp;
   }
 
-  // Get word count
-  int get wordCount {
-    if (content.trim().isEmpty) return 0;
-    return content.trim().split(RegExp(r'\s+')).length;
-  }
-
-  // Get character count (excluding spaces)
-  int get characterCount {
-    return content.replaceAll(RegExp(r'\s+'), '').length;
+  @override
+  int get hashCode {
+    return id.hashCode ^
+        title.hashCode ^
+        content.hashCode ^
+        duration.hashCode ^
+        timestamp.hashCode;
   }
 }
