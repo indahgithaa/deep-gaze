@@ -1,3 +1,4 @@
+// File: lib/widgets/main_app_scaffold.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../services/global_seeso_service.dart';
@@ -37,12 +38,18 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
   // Navigation bar boundaries
   final Map<String, Rect> _navBounds = {};
 
+  // CRITICAL: Track if this scaffold should handle navigation
+  bool _shouldHandleNavigation = true;
+
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
     _eyeTrackingService = GlobalSeesoService();
-    _eyeTrackingService.addListener(_onEyeTrackingUpdate);
+
+    // IMPORTANT: Only listen when this scaffold is the active page manager
+    _setAsActiveNavigationHandler();
+
     _initializeEyeTracking();
 
     // Calculate navigation bounds after build
@@ -55,14 +62,45 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
   void dispose() {
     _isDisposed = true;
     _dwellTimer?.cancel();
-    if (_eyeTrackingService.hasListeners) {
-      _eyeTrackingService.removeListener(_onEyeTrackingUpdate);
-    }
+
+    // CRITICAL: Remove this scaffold as the navigation handler
+    _removeAsNavigationHandler();
+
     super.dispose();
   }
 
+  void _setAsActiveNavigationHandler() {
+    // Set this scaffold as the navigation handler
+    _eyeTrackingService.setActivePage(
+        'main_app_scaffold', _onEyeTrackingUpdate);
+    _shouldHandleNavigation = true;
+    print("DEBUG: MainAppScaffold set as active navigation handler");
+  }
+
+  void _removeAsNavigationHandler() {
+    // Remove this scaffold as the navigation handler
+    _eyeTrackingService.removePage('main_app_scaffold');
+    _shouldHandleNavigation = false;
+    print("DEBUG: MainAppScaffold removed as navigation handler");
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Check if we're returning from a sub-page
+    final route = ModalRoute.of(context);
+    if (route != null && route.isCurrent && !_shouldHandleNavigation) {
+      // We're back to being the current route, re-enable navigation handling
+      print(
+          "DEBUG: MainAppScaffold became current route, re-enabling navigation");
+      _setAsActiveNavigationHandler();
+      _calculateNavigationBounds(); // Recalculate bounds
+    }
+  }
+
   void _calculateNavigationBounds() {
-    if (_isDisposed || !mounted) return;
+    if (_isDisposed || !mounted || !_shouldHandleNavigation) return;
 
     final screenSize = MediaQuery.of(context).size;
     final navBarHeight = 80.0;
@@ -95,12 +133,19 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
       navBarHeight,
     );
 
-    print("DEBUG: Navigation bounds calculated: $_navBounds");
+    print("DEBUG: MainAppScaffold navigation bounds calculated: $_navBounds");
   }
 
   void _onEyeTrackingUpdate() {
-    if (_isDisposed || !mounted) return;
+    if (_isDisposed || !mounted || !_shouldHandleNavigation) return;
     if (!_eyeTrackingService.isTracking) return;
+
+    // CRITICAL: Only handle navigation if we're the active navigation handler
+    if (_eyeTrackingService.activePageId != 'main_app_scaffold') {
+      print(
+          "DEBUG: MainAppScaffold ignoring gaze - not active page (active: ${_eyeTrackingService.activePageId})");
+      return;
+    }
 
     final currentGazePoint = Offset(
       _eyeTrackingService.gazeX,
@@ -113,6 +158,7 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
     for (final entry in _navBounds.entries) {
       if (entry.value.contains(currentGazePoint)) {
         hoveredElement = entry.key;
+        print("DEBUG: MainAppScaffold detected gaze on $hoveredElement");
         break;
       }
     }
@@ -166,6 +212,7 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
 
   void _navigateToPage(int index) {
     if (_isDisposed || !mounted || _currentIndex == index) return;
+    if (!_shouldHandleNavigation) return;
 
     _stopDwellTimer();
     setState(() {
@@ -179,6 +226,8 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
         backgroundColor: Colors.blue,
       ),
     );
+
+    print("DEBUG: MainAppScaffold navigated to page $index");
   }
 
   String _getPageName(int index) {
@@ -217,7 +266,7 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
   }
 
   void _startDwellTimer(String elementId, VoidCallback action) {
-    if (_isDisposed || !mounted) return;
+    if (_isDisposed || !mounted || !_shouldHandleNavigation) return;
     if (_currentDwellingElement == elementId) return;
 
     _stopDwellTimer();
@@ -229,11 +278,15 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
       });
     }
 
+    print("DEBUG: MainAppScaffold starting dwell timer for: $elementId");
     _dwellStartTime = DateTime.now();
     _dwellTimer = Timer.periodic(
       Duration(milliseconds: _dwellUpdateIntervalMs),
       (timer) {
-        if (_isDisposed || !mounted || _currentDwellingElement != elementId) {
+        if (_isDisposed ||
+            !mounted ||
+            _currentDwellingElement != elementId ||
+            !_shouldHandleNavigation) {
           timer.cancel();
           return;
         }
@@ -290,23 +343,27 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
           // Main page content
           _getCurrentPage(),
 
-          // Gaze point indicator
-          GazePointWidget(
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            isVisible: _eyeTrackingService.isTracking,
-          ),
+          // Only show gaze point and status if we're the active handler
+          if (_shouldHandleNavigation &&
+              _eyeTrackingService.activePageId == 'main_app_scaffold') ...[
+            // Gaze point indicator
+            GazePointWidget(
+              gazeX: _eyeTrackingService.gazeX,
+              gazeY: _eyeTrackingService.gazeY,
+              isVisible: _eyeTrackingService.isTracking,
+            ),
 
-          // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: _currentIndex + 1,
-            totalPages: 3,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
-          ),
+            // Status information
+            StatusInfoWidget(
+              statusMessage: _eyeTrackingService.statusMessage,
+              currentPage: _currentIndex + 1,
+              totalPages: 3,
+              gazeX: _eyeTrackingService.gazeX,
+              gazeY: _eyeTrackingService.gazeY,
+              currentDwellingElement: _currentDwellingElement,
+              dwellProgress: _dwellProgress,
+            ),
+          ],
         ],
       ),
       bottomNavigationBar: _buildBottomNavigationBar(),
@@ -341,7 +398,8 @@ class _MainAppScaffoldState extends State<MainAppScaffold> {
   Widget _buildNavItem(
       int index, IconData icon, String label, String elementId) {
     final isActive = _currentIndex == index;
-    final isCurrentlyDwelling = _currentDwellingElement == elementId;
+    final isCurrentlyDwelling =
+        _currentDwellingElement == elementId && _shouldHandleNavigation;
 
     return Expanded(
       child: Container(

@@ -6,6 +6,7 @@ import '../models/topic.dart';
 import '../services/global_seeso_service.dart';
 import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
+import '../mixins/responsive_bounds_mixin.dart';
 
 class MaterialReaderPage extends StatefulWidget {
   final Subject subject;
@@ -21,7 +22,8 @@ class MaterialReaderPage extends StatefulWidget {
   State<MaterialReaderPage> createState() => _MaterialReaderPageState();
 }
 
-class _MaterialReaderPageState extends State<MaterialReaderPage> {
+class _MaterialReaderPageState extends State<MaterialReaderPage>
+    with ResponsiveBoundsMixin {
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
@@ -32,12 +34,9 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
   DateTime? _dwellStartTime;
 
   // Dwell time configuration
-  static const int _navigationDwellTimeMs = 800; // 800ms for scroll navigation
-  static const int _buttonDwellTimeMs = 1500; // 1.5s for buttons
+  static const int _navigationDwellTimeMs = 800;
+  static const int _buttonDwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
-
-  // Button boundaries for automatic detection
-  final Map<String, Rect> _buttonBounds = {};
 
   // Reading state
   final ScrollController _scrollController = ScrollController();
@@ -48,24 +47,48 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
   // Auto-scroll configuration
   Timer? _autoScrollTimer;
   static const Duration _autoScrollSpeed = Duration(milliseconds: 50);
-  static const double _scrollIncrement = 150.0;
 
-  // FIXED: Navigation zones with proper height calculation
-  final double _navigationZoneHeight = 80.0; // Increased from 60 to 80
-  final double _bottomNavigationHeight = 80.0; // Height of bottom nav bar
+  // FIXED: Proper navigation zone configuration
+  final double _navigationZoneHeight =
+      60.0; // Reduced height for better precision
+  final double _headerHeight = 120.0; // Header height
+
+  // Override mixin configuration
+  @override
+  double get boundsUpdateDelay =>
+      150.0; // Slightly longer delay for complex layout
+
+  @override
+  bool get enableBoundsLogging => true; // Enable detailed logging
 
   @override
   void initState() {
     super.initState();
     print("DEBUG: MaterialReaderPage initState");
     _eyeTrackingService = GlobalSeesoService();
+
+    // CRITICAL FIX: Use the new page focus system
     _eyeTrackingService.setActivePage('material_reader', _onEyeTrackingUpdate);
+
     _initializeEyeTracking();
 
-    // Initialize button bounds after the first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeButtonBounds();
-    });
+    // Generate GlobalKeys for all interactive elements using the mixin
+    _initializeElementKeys();
+
+    // Calculate button bounds after the first frame using the mixin
+    updateBoundsAfterBuild();
+  }
+
+  void _initializeElementKeys() {
+    // Generate keys for all interactive elements using the mixin
+    generateKeyForElement('scroll_up_zone');
+    generateKeyForElement('scroll_down_zone');
+    generateKeyForElement('back_button');
+    generateKeyForElement('dark_mode_button');
+    generateKeyForElement('font_increase');
+    generateKeyForElement('font_decrease');
+
+    print("DEBUG: Generated ${elementCount} element keys using mixin");
   }
 
   @override
@@ -77,71 +100,46 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     _autoScrollTimer = null;
     _scrollController.dispose();
 
+    // CRITICAL FIX: Remove this page from the focus system
     _eyeTrackingService.removePage('material_reader');
+
+    // Clean up mixin resources
+    clearBounds();
 
     print("DEBUG: MaterialReaderPage disposed");
     super.dispose();
   }
 
-  void _initializeButtonBounds() {
-    if (!mounted) return;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recalculate bounds when dependencies change (like screen rotation)
+    updateBoundsAfterBuild();
+  }
 
-    final screenHeight = MediaQuery.of(context).size.height;
-    final screenWidth = MediaQuery.of(context).size.width;
-    final safeAreaTop = MediaQuery.of(context).padding.top;
-    final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+  void _stopAutoScrollIfNotInZone(String? hoveredElement) {
+    // Stop auto-scroll if user looks away from scroll zones
+    if (_isAutoScrolling &&
+        (hoveredElement == null || !hoveredElement.contains('scroll'))) {
+      _autoScrollTimer?.cancel();
+      _autoScrollTimer = null;
+      _isAutoScrolling = false;
+      print("DEBUG: Auto-scroll stopped - gaze left scroll zones");
 
-    // FIXED: Calculate proper positions avoiding bottom navigation
-    final headerHeight = 120.0; // Height of the material reader header
-    final contentAreaTop = safeAreaTop + headerHeight;
-    final contentAreaBottom =
-        screenHeight - _bottomNavigationHeight - safeAreaBottom;
-    final availableContentHeight = contentAreaBottom - contentAreaTop;
-
-    print("DEBUG: Screen height: $screenHeight");
-    print("DEBUG: Safe area top: $safeAreaTop, bottom: $safeAreaBottom");
-    print("DEBUG: Content area: $contentAreaTop to $contentAreaBottom");
-    print("DEBUG: Available content height: $availableContentHeight");
-    print(
-        "DEBUG: Bottom nav starts at: ${screenHeight - _bottomNavigationHeight - safeAreaBottom}");
-
-    // Back button boundary
-    _buttonBounds['back_button'] = const Rect.fromLTWH(20, 50, 50, 50);
-
-    // Dark mode toggle boundary
-    _buttonBounds['dark_mode_button'] =
-        Rect.fromLTWH(screenWidth - 70, 50, 50, 50);
-
-    // Font size controls
-    _buttonBounds['font_increase'] =
-        Rect.fromLTWH(screenWidth - 120, 110, 40, 40);
-    _buttonBounds['font_decrease'] =
-        Rect.fromLTWH(screenWidth - 70, 110, 40, 40);
-
-    // FIXED: Navigation zones positioned within content area, avoiding bottom nav
-    // Scroll up zone - positioned right after header
-    _buttonBounds['scroll_up_zone'] = Rect.fromLTWH(
-      0,
-      contentAreaTop,
-      screenWidth,
-      _navigationZoneHeight,
-    );
-
-    // Scroll down zone - positioned before bottom navigation with safe margin
-    final scrollDownTop = contentAreaBottom -
-        _navigationZoneHeight -
-        20; // 20px margin from bottom nav
-    _buttonBounds['scroll_down_zone'] = Rect.fromLTWH(
-      0,
-      scrollDownTop,
-      screenWidth,
-      _navigationZoneHeight,
-    );
-
-    print("DEBUG: Scroll up zone: ${_buttonBounds['scroll_up_zone']}");
-    print("DEBUG: Scroll down zone: ${_buttonBounds['scroll_down_zone']}");
-    print(
-        "DEBUG: Initialized ${_buttonBounds.length} button bounds for MaterialReader");
+      if (mounted) {
+        setState(() {
+          _isAutoScrolling = false;
+        });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Auto-scroll stopped'),
+            duration: Duration(seconds: 1),
+            backgroundColor: Colors.grey,
+          ),
+        );
+      }
+    }
   }
 
   void _onEyeTrackingUpdate() {
@@ -150,31 +148,38 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    // Quick bounds check
+    // Bounds validation using mixin helper
+    final screenSize = MediaQuery.of(context).size;
     if (currentGazePoint.dx < 0 ||
         currentGazePoint.dy < 0 ||
-        currentGazePoint.dx > MediaQuery.of(context).size.width ||
-        currentGazePoint.dy > MediaQuery.of(context).size.height) {
+        currentGazePoint.dx > screenSize.width ||
+        currentGazePoint.dy > screenSize.height) {
+      // IMPROVED: Stop auto-scroll when gaze goes off-screen
+      _stopAutoScrollIfNotInZone(null);
       return;
     }
 
-    String? hoveredElement;
+    // IMPROVED: Use mixin's precise hit detection
+    String? hoveredElement = getElementAtPoint(currentGazePoint);
 
-    // Check which element is being gazed at
-    for (final entry in _buttonBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredElement = entry.key;
-        print(
-            "DEBUG: Gaze detected on: $hoveredElement at (${currentGazePoint.dx.toInt()}, ${currentGazePoint.dy.toInt()})");
-        break;
-      }
+    // IMPROVED: Check if we should stop auto-scrolling
+    _stopAutoScrollIfNotInZone(hoveredElement);
+
+    // Debug logging for navigation zones
+    if (hoveredElement != null && hoveredElement.contains('scroll')) {
+      print(
+          "DEBUG: Gaze detected on $hoveredElement at (${currentGazePoint.dx.toInt()}, ${currentGazePoint.dy.toInt()})");
+      final bounds = getBoundsForElement(hoveredElement);
+      print("DEBUG: Zone bounds: $bounds");
     }
 
     // Only process if hover state changed
     if (hoveredElement != _currentDwellingElement) {
       if (hoveredElement != null) {
+        print("DEBUG: Started dwelling on: $hoveredElement");
         _handleElementHover(hoveredElement);
       } else if (_currentDwellingElement != null) {
+        print("DEBUG: Stopped dwelling on: $_currentDwellingElement");
         _stopDwellTimer();
       }
     }
@@ -204,12 +209,15 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
       case 'scroll_up_zone':
         action = () => _startAutoScroll(isUp: true);
         dwellTime = _navigationDwellTimeMs;
+        print("DEBUG: Scroll up action assigned");
         break;
       case 'scroll_down_zone':
         action = () => _startAutoScroll(isUp: false);
         dwellTime = _navigationDwellTimeMs;
+        print("DEBUG: Scroll down action assigned");
         break;
       default:
+        print("DEBUG: Unknown element: $elementId");
         return;
     }
 
@@ -288,9 +296,27 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
   void _stopDwellTimer() {
     _dwellTimer?.cancel();
     _dwellTimer = null;
-    _autoScrollTimer?.cancel();
-    _autoScrollTimer = null;
-    _isAutoScrolling = false;
+
+    // IMPROVED: Only stop auto-scroll if user looks away from scroll zones
+    if (_isAutoScrolling &&
+        _currentDwellingElement != null &&
+        !_currentDwellingElement!.contains('scroll')) {
+      _autoScrollTimer?.cancel();
+      _autoScrollTimer = null;
+      _isAutoScrolling = false;
+      print("DEBUG: Auto-scroll stopped - user looked away from scroll zones");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Auto-scroll stopped'),
+            duration: Duration(seconds: 1),
+            backgroundColor: Colors.grey,
+          ),
+        );
+      }
+    }
 
     if (mounted && !_isDisposed) {
       setState(() {
@@ -355,71 +381,149 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
 
-    if (_isAutoScrolling) return;
+    if (_isAutoScrolling) {
+      print("DEBUG: Already auto-scrolling, ignoring");
+      return;
+    }
+
+    // Check if scrolling is possible
+    if (!_scrollController.hasClients) {
+      print("DEBUG: ScrollController has no clients");
+      return;
+    }
+
+    final currentOffset = _scrollController.offset;
+    final maxOffset = _scrollController.position.maxScrollExtent;
+
+    if (isUp && currentOffset <= 0) {
+      print("DEBUG: Already at top, cannot scroll up");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Already at the top'),
+          duration: Duration(seconds: 1),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (!isUp && currentOffset >= maxOffset) {
+      print("DEBUG: Already at bottom, cannot scroll down");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Already at the bottom'),
+          duration: Duration(seconds: 1),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     setState(() {
       _isAutoScrolling = true;
     });
 
-    print("DEBUG: Starting auto-scroll ${isUp ? 'UP' : 'DOWN'}");
+    print("DEBUG: Starting smooth auto-scroll ${isUp ? 'UP' : 'DOWN'}");
 
     // Show feedback
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Auto-scrolling ${isUp ? 'up' : 'down'}...'),
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 4),
         backgroundColor: isUp ? Colors.purple : Colors.teal,
       ),
     );
 
-    // FIXED: Improved auto-scroll with better increments
-    _autoScrollTimer = Timer.periodic(_autoScrollSpeed, (timer) {
+    // IMPROVED: Smooth scrolling implementation with smaller increments
+    const scrollIncrement = 3.0; // Much smaller increment for smoothness
+    const frameDuration = Duration(milliseconds: 16); // ~60 FPS
+
+    _autoScrollTimer = Timer.periodic(frameDuration, (timer) {
       if (_isDisposed || !mounted || !_scrollController.hasClients) {
         timer.cancel();
         _isAutoScrolling = false;
+        print("DEBUG: Auto-scroll stopped - disposed or no clients");
         return;
       }
 
       final currentOffset = _scrollController.offset;
       final maxOffset = _scrollController.position.maxScrollExtent;
-      double newOffset;
 
-      // FIXED: Larger scroll increments for better visibility
-      final scrollAmount = isUp ? -150.0 : 150.0; // Increased from 2.0
+      // Calculate new offset with smooth increment
+      final scrollAmount = isUp ? -scrollIncrement : scrollIncrement;
+      double newOffset = currentOffset + scrollAmount;
 
-      if (isUp) {
-        newOffset = (currentOffset + scrollAmount).clamp(0.0, maxOffset);
-        if (newOffset <= 0) {
-          timer.cancel();
-          _isAutoScrolling = false;
-          print("DEBUG: Reached top of content");
+      // Check boundaries and stop if reached
+      if (isUp && newOffset <= 0) {
+        newOffset = 0;
+        timer.cancel();
+        _isAutoScrolling = false;
+        print("DEBUG: Reached top of content");
+        if (mounted) {
+          setState(() {
+            _isAutoScrolling = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Reached the top'),
+              duration: Duration(seconds: 1),
+              backgroundColor: Colors.purple,
+            ),
+          );
         }
-      } else {
-        newOffset = (currentOffset + scrollAmount).clamp(0.0, maxOffset);
-        if (newOffset >= maxOffset) {
-          timer.cancel();
-          _isAutoScrolling = false;
-          print("DEBUG: Reached bottom of content");
+      } else if (!isUp && newOffset >= maxOffset) {
+        newOffset = maxOffset;
+        timer.cancel();
+        _isAutoScrolling = false;
+        print("DEBUG: Reached bottom of content");
+        if (mounted) {
+          setState(() {
+            _isAutoScrolling = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Reached the bottom'),
+              duration: Duration(seconds: 1),
+              backgroundColor: Colors.teal,
+            ),
+          );
         }
       }
 
-      _scrollController.animateTo(
-        newOffset,
-        duration: const Duration(milliseconds: 50),
-        curve: Curves.linear,
-      );
+      // Perform smooth scroll without animation to avoid conflicts
+      try {
+        _scrollController.jumpTo(newOffset);
+      } catch (e) {
+        print("DEBUG: Error during scroll: $e");
+        timer.cancel();
+        _isAutoScrolling = false;
+        if (mounted) {
+          setState(() {
+            _isAutoScrolling = false;
+          });
+        }
+      }
     });
 
-    // Auto-stop after 5 seconds (increased from 3)
-    Timer(const Duration(seconds: 5), () {
-      _autoScrollTimer?.cancel();
-      _autoScrollTimer = null;
-      if (mounted) {
-        setState(() {
-          _isAutoScrolling = false;
-        });
-        print("DEBUG: Auto-scroll timeout reached");
+    // Auto-stop after 8 seconds to prevent infinite scrolling
+    Timer(const Duration(seconds: 8), () {
+      if (_autoScrollTimer?.isActive == true) {
+        _autoScrollTimer?.cancel();
+        _autoScrollTimer = null;
+        if (mounted) {
+          setState(() {
+            _isAutoScrolling = false;
+          });
+          print("DEBUG: Auto-scroll timeout reached");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Auto-scroll stopped'),
+              duration: Duration(seconds: 1),
+              backgroundColor: Colors.grey,
+            ),
+          );
+        }
       }
     });
   }
@@ -460,8 +564,10 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
   Widget _buildControlButton(
       String elementId, IconData icon, Color color, String tooltip) {
     final isCurrentlyDwelling = _currentDwellingElement == elementId;
+    final key = generateKeyForElement(elementId); // Use mixin to get/create key
 
     return Container(
+      key: key, // Assign the GlobalKey here
       width: 50,
       height: 50,
       child: Material(
@@ -611,7 +717,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
             ),
           ),
           const SizedBox(height: 24),
-          // Chapter 3
+          // More chapters...
           Text(
             'Chapter 3: Examples and Practice',
             style: TextStyle(
@@ -630,7 +736,6 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
               color: _isDarkMode ? Colors.white70 : Colors.black87,
             ),
           ),
-          // Add much more content for testing scroll
           const SizedBox(height: 24),
           Text(
             'Chapter 4: Advanced Topics',
@@ -667,8 +772,7 @@ class _MaterialReaderPageState extends State<MaterialReaderPage> {
               color: _isDarkMode ? Colors.white70 : Colors.black87,
             ),
           ),
-          const SizedBox(
-              height: 100), // Extra space at the bottom for scroll testing
+          const SizedBox(height: 100), // Extra space for scroll testing
         ],
       ),
     );
@@ -695,7 +799,7 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
             children: [
               // Header
               Container(
-                height: 120,
+                height: _headerHeight,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.centerLeft,
@@ -716,6 +820,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                         GestureDetector(
                           onTap: _goBack,
                           child: Container(
+                            key: generateKeyForElement(
+                                'back_button'), // Use mixin
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.2),
@@ -756,8 +862,10 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                   ),
                 ),
               ),
-              // FIXED: Scroll up zone - positioned correctly
+
+              // FIXED: Scroll up zone with precise bounds using mixin
               Container(
+                key: generateKeyForElement('scroll_up_zone'), // Use mixin
                 height: _navigationZoneHeight,
                 width: double.infinity,
                 decoration: BoxDecoration(
@@ -766,8 +874,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                     end: Alignment.bottomCenter,
                     colors: [
                       (_currentDwellingElement == 'scroll_up_zone'
-                          ? Colors.purple.withOpacity(0.4)
-                          : Colors.purple.withOpacity(0.15)),
+                          ? Colors.purple.withOpacity(0.5)
+                          : Colors.purple.withOpacity(0.2)),
                       Colors.transparent,
                     ],
                   ),
@@ -779,8 +887,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                       Icon(
                         Icons.keyboard_arrow_up,
                         color: _currentDwellingElement == 'scroll_up_zone'
-                            ? Colors.purple.shade600
-                            : Colors.purple.withOpacity(0.6),
+                            ? Colors.purple.shade700
+                            : Colors.purple.withOpacity(0.7),
                         size: 28,
                       ),
                       const SizedBox(width: 8),
@@ -788,8 +896,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                         'Look here to scroll up',
                         style: TextStyle(
                           color: _currentDwellingElement == 'scroll_up_zone'
-                              ? Colors.purple.shade600
-                              : Colors.purple.withOpacity(0.7),
+                              ? Colors.purple.shade700
+                              : Colors.purple.withOpacity(0.8),
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -804,14 +912,15 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                             strokeWidth: 2,
                             backgroundColor: Colors.purple.withOpacity(0.3),
                             valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.purple.shade600),
+                                Colors.purple.shade700),
                           ),
                         ),
                     ],
                   ),
                 ),
               ),
-              // SCROLLABLE CONTENT AREA - FIXED to take remaining space
+
+              // SCROLLABLE CONTENT AREA
               Expanded(
                 child: Container(
                   width: double.infinity,
@@ -825,8 +934,10 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                   ),
                 ),
               ),
-              // FIXED: Scroll down zone - positioned above bottom navigation
+
+              // FIXED: Scroll down zone with precise bounds and proper positioning using mixin
               Container(
+                key: generateKeyForElement('scroll_down_zone'), // Use mixin
                 height: _navigationZoneHeight,
                 width: double.infinity,
                 decoration: BoxDecoration(
@@ -835,8 +946,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                     end: Alignment.topCenter,
                     colors: [
                       (_currentDwellingElement == 'scroll_down_zone'
-                          ? Colors.teal.withOpacity(0.4)
-                          : Colors.teal.withOpacity(0.15)),
+                          ? Colors.teal.withOpacity(0.5)
+                          : Colors.teal.withOpacity(0.2)),
                       Colors.transparent,
                     ],
                   ),
@@ -848,8 +959,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                       Icon(
                         Icons.keyboard_arrow_down,
                         color: _currentDwellingElement == 'scroll_down_zone'
-                            ? Colors.teal.shade600
-                            : Colors.teal.withOpacity(0.6),
+                            ? Colors.teal.shade700
+                            : Colors.teal.withOpacity(0.7),
                         size: 28,
                       ),
                       const SizedBox(width: 8),
@@ -857,8 +968,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                         'Look here to scroll down',
                         style: TextStyle(
                           color: _currentDwellingElement == 'scroll_down_zone'
-                              ? Colors.teal.shade600
-                              : Colors.teal.withOpacity(0.7),
+                              ? Colors.teal.shade700
+                              : Colors.teal.withOpacity(0.8),
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -873,7 +984,7 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
                             strokeWidth: 2,
                             backgroundColor: Colors.teal.withOpacity(0.3),
                             valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.teal.shade600),
+                                Colors.teal.shade700),
                           ),
                         ),
                     ],
@@ -882,14 +993,17 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
               ),
             ],
           ),
+
           // Control buttons - FLOATING OVERLAY
           _buildNavigationControls(),
+
           // Gaze point indicator
           GazePointWidget(
             gazeX: _eyeTrackingService.gazeX,
             gazeY: _eyeTrackingService.gazeY,
             isVisible: _eyeTrackingService.isTracking,
           ),
+
           // Status information
           StatusInfoWidget(
             statusMessage: _eyeTrackingService.statusMessage,
@@ -900,7 +1014,8 @@ Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed 
             currentDwellingElement: _currentDwellingElement,
             dwellProgress: _dwellProgress,
           ),
-          // FIXED: Auto-scroll indicator with better visibility
+
+          // Auto-scroll indicator
           if (_isAutoScrolling)
             Positioned(
               top: MediaQuery.of(context).size.height / 2 - 60,
