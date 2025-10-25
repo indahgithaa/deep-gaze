@@ -1,480 +1,244 @@
-// File: lib/widgets/main_app_scaffold.dart
-import 'package:flutter/material.dart';
 import 'dart:async';
-import '../services/global_seeso_service.dart';
+import 'dart:math';
+import 'package:flutter/material.dart';
+
 import '../pages/ruang_kelas.dart';
 import '../pages/lecture_recorder_page.dart';
 import '../pages/profile_page.dart';
-import '../widgets/gaze_point_widget.dart';
-import '../widgets/status_info_widget.dart';
+import 'gaze_overlay_manager.dart';
+import 'nav_gaze_bridge.dart';
 
 class MainAppScaffold extends StatefulWidget {
-  final int initialIndex;
-
-  const MainAppScaffold({
-    super.key,
-    this.initialIndex = 0,
-  });
+  final int startIndex;
+  const MainAppScaffold({super.key, this.startIndex = 0});
 
   @override
   State<MainAppScaffold> createState() => _MainAppScaffoldState();
 }
 
 class _MainAppScaffoldState extends State<MainAppScaffold> {
-  late int _currentIndex;
-  late GlobalSeesoService _eyeTrackingService;
-  bool _isDisposed = false;
+  late int _index;
+  late final PageController _pageController;
 
-  // Dwell time selection state for navigation
-  String? _currentDwellingElement;
-  double _dwellProgress = 0.0;
+  // ===== Navbar hit-test & dwell =====
+  final _navKeys = List<GlobalKey>.generate(3, (_) => GlobalKey());
+  final GlobalKey _navBarKey = GlobalKey();
+  Rect? _navBarRect;
+  final List<Rect> _navItemBounds = [Rect.zero, Rect.zero, Rect.zero];
+
+  int? _hoveredIndex;
   Timer? _dwellTimer;
-  DateTime? _dwellStartTime;
+  DateTime? _dwellStart;
+  final Duration _dwellTime = const Duration(milliseconds: 1500);
+  double _dwellProgress = 0.0;
 
-  // Dwell time configuration
-  static const int _dwellTimeMs = 1500;
-  static const int _dwellUpdateIntervalMs = 50;
+  // Langganan ke NavGazeBridge
+  void _onGazeBusChanged() {
+    final pos = NavGazeBridge.instance.cursor;
+    final tracking = NavGazeBridge.instance.isTracking;
 
-  // Navigation bar boundaries
-  final Map<String, Rect> _navBounds = {};
+    // Hit-test navbar
+    final hit = _hitTestNav(pos);
+    if (hit != _hoveredIndex) {
+      _cancelDwell();
+      _hoveredIndex = hit;
+      _dwellProgress = 0.0;
+    }
 
-  // CRITICAL: Track if this scaffold should handle navigation
-  bool _shouldHandleNavigation = true;
+    if (_hoveredIndex != null && tracking) {
+      _startDwellIfNeeded(() {
+        _navigateTo(_hoveredIndex!);
+        _hoveredIndex = null;
+        _cancelDwell();
+      });
+    }
+
+    // Kirim highlight + progress ke overlay (agar ada indikator 1.5s)
+    GazeOverlayManager.instance.update(
+      cursor: pos,
+      visible: tracking,
+      highlight:
+          (_hoveredIndex != null) ? _navItemBounds[_hoveredIndex!] : null,
+      progress: (_hoveredIndex != null) ? _dwellProgress : null,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex;
-    _eyeTrackingService = GlobalSeesoService();
+    _index = widget.startIndex.clamp(0, 2);
+    _pageController = PageController(initialPage: _index);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _computeNavBounds());
 
-    // IMPORTANT: Only listen when this scaffold is the active page manager
-    _setAsActiveNavigationHandler();
-
-    _initializeEyeTracking();
-
-    // Calculate navigation bounds after build
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _calculateNavigationBounds();
-    });
-  }
-
-  @override
-  void dispose() {
-    _isDisposed = true;
-    _dwellTimer?.cancel();
-
-    // CRITICAL: Remove this scaffold as the navigation handler
-    _removeAsNavigationHandler();
-
-    super.dispose();
-  }
-
-  void _setAsActiveNavigationHandler() {
-    // Set this scaffold as the navigation handler
-    _eyeTrackingService.setActivePage(
-        'main_app_scaffold', _onEyeTrackingUpdate);
-    _shouldHandleNavigation = true;
-    print("DEBUG: MainAppScaffold set as active navigation handler");
-  }
-
-  void _removeAsNavigationHandler() {
-    // Remove this scaffold as the navigation handler
-    _eyeTrackingService.removePage('main_app_scaffold');
-    _shouldHandleNavigation = false;
-    print("DEBUG: MainAppScaffold removed as navigation handler");
+    // Subscribe ke gaze bus
+    NavGazeBridge.instance.addListener(_onGazeBusChanged);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
-    // Check if we're returning from a sub-page
-    final route = ModalRoute.of(context);
-    if (route != null && route.isCurrent && !_shouldHandleNavigation) {
-      // We're back to being the current route, re-enable navigation handling
-      print(
-          "DEBUG: MainAppScaffold became current route, re-enabling navigation");
-      _setAsActiveNavigationHandler();
-      _calculateNavigationBounds(); // Recalculate bounds
-    }
-  }
-
-  void _calculateNavigationBounds() {
-    if (_isDisposed || !mounted || !_shouldHandleNavigation) return;
-
-    final screenSize = MediaQuery.of(context).size;
-    final navBarHeight = 80.0;
-    final navBarTop = screenSize.height -
-        navBarHeight -
-        MediaQuery.of(context).padding.bottom;
-    final itemWidth = screenSize.width / 3;
-
-    // Home navigation item
-    _navBounds['nav_home'] = Rect.fromLTWH(
-      0,
-      navBarTop,
-      itemWidth,
-      navBarHeight,
-    );
-
-    // Recorder navigation item
-    _navBounds['nav_recorder'] = Rect.fromLTWH(
-      itemWidth,
-      navBarTop,
-      itemWidth,
-      navBarHeight,
-    );
-
-    // Profile navigation item
-    _navBounds['nav_profile'] = Rect.fromLTWH(
-      itemWidth * 2,
-      navBarTop,
-      itemWidth,
-      navBarHeight,
-    );
-
-    print("DEBUG: MainAppScaffold navigation bounds calculated: $_navBounds");
-  }
-
-  void _onEyeTrackingUpdate() {
-    if (_isDisposed || !mounted || !_shouldHandleNavigation) return;
-    if (!_eyeTrackingService.isTracking) return;
-
-    // CRITICAL: Only handle navigation if we're the active navigation handler
-    if (_eyeTrackingService.activePageId != 'main_app_scaffold') {
-      print(
-          "DEBUG: MainAppScaffold ignoring gaze - not active page (active: ${_eyeTrackingService.activePageId})");
-      return;
-    }
-
-    final currentGazePoint = Offset(
-      _eyeTrackingService.gazeX,
-      _eyeTrackingService.gazeY,
-    );
-
-    String? hoveredElement;
-
-    // Check navigation area gaze
-    for (final entry in _navBounds.entries) {
-      if (entry.value.contains(currentGazePoint)) {
-        hoveredElement = entry.key;
-        print("DEBUG: MainAppScaffold detected gaze on $hoveredElement");
-        break;
-      }
-    }
-
-    if (hoveredElement != null) {
-      if (_currentDwellingElement != hoveredElement) {
-        _handleNavigationHover(hoveredElement);
-      }
-    } else {
-      if (_currentDwellingElement != null) {
-        _stopDwellTimer();
-      }
-    }
-
-    if (mounted && !_isDisposed) {
-      setState(() {});
-    }
-  }
-
-  void _handleNavigationHover(String elementId) {
-    VoidCallback action;
-
-    switch (elementId) {
-      case 'nav_home':
-        if (_currentIndex != 0) {
-          action = () => _navigateToPage(0);
-        } else {
-          return; // Don't start dwell if already on the page
-        }
-        break;
-      case 'nav_recorder':
-        if (_currentIndex != 1) {
-          action = () => _navigateToPage(1);
-        } else {
-          return;
-        }
-        break;
-      case 'nav_profile':
-        if (_currentIndex != 2) {
-          action = () => _navigateToPage(2);
-        } else {
-          return;
-        }
-        break;
-      default:
-        return;
-    }
-
-    _startDwellTimer(elementId, action);
-  }
-
-  void _navigateToPage(int index) {
-    if (_isDisposed || !mounted || _currentIndex == index) return;
-    if (!_shouldHandleNavigation) return;
-
-    _stopDwellTimer();
-    setState(() {
-      _currentIndex = index;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Navigated to ${_getPageName(index)}'),
-        duration: const Duration(seconds: 1),
-        backgroundColor: Colors.blue,
-      ),
-    );
-
-    print("DEBUG: MainAppScaffold navigated to page $index");
-  }
-
-  String _getPageName(int index) {
-    switch (index) {
-      case 0:
-        return 'Home';
-      case 1:
-        return 'Recorder';
-      case 2:
-        return 'Profile';
-      default:
-        return 'Unknown';
-    }
-  }
-
-  Future<void> _initializeEyeTracking() async {
-    if (_isDisposed || !mounted) return;
-
-    try {
-      print("DEBUG: Initializing eye tracking in MainAppScaffold");
-      await _eyeTrackingService.initialize(context);
-      print("DEBUG: Eye tracking successfully initialized in MainAppScaffold");
-    } catch (e) {
-      print('Eye tracking initialization failed: $e');
-      if (mounted && !_isDisposed) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text("Eye tracking initialization failed: ${e.toString()}"),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  void _startDwellTimer(String elementId, VoidCallback action) {
-    if (_isDisposed || !mounted || !_shouldHandleNavigation) return;
-    if (_currentDwellingElement == elementId) return;
-
-    _stopDwellTimer();
-
-    if (mounted && !_isDisposed) {
-      setState(() {
-        _currentDwellingElement = elementId;
-        _dwellProgress = 0.0;
-      });
-    }
-
-    print("DEBUG: MainAppScaffold starting dwell timer for: $elementId");
-    _dwellStartTime = DateTime.now();
-    _dwellTimer = Timer.periodic(
-      Duration(milliseconds: _dwellUpdateIntervalMs),
-      (timer) {
-        if (_isDisposed ||
-            !mounted ||
-            _currentDwellingElement != elementId ||
-            !_shouldHandleNavigation) {
-          timer.cancel();
-          return;
-        }
-
-        final elapsed =
-            DateTime.now().difference(_dwellStartTime!).inMilliseconds;
-        final progress = (elapsed / _dwellTimeMs).clamp(0.0, 1.0);
-
-        if (mounted && !_isDisposed) {
-          setState(() {
-            _dwellProgress = progress;
-          });
-        }
-
-        if (progress >= 1.0) {
-          timer.cancel();
-          if (mounted && !_isDisposed) {
-            action();
-          }
-        }
-      },
-    );
-  }
-
-  void _stopDwellTimer() {
-    _dwellTimer?.cancel();
-    _dwellTimer = null;
-    if (mounted && !_isDisposed) {
-      setState(() {
-        _currentDwellingElement = null;
-        _dwellProgress = 0.0;
-      });
-    }
-  }
-
-  Widget _getCurrentPage() {
-    switch (_currentIndex) {
-      case 0:
-        return const RuangKelas();
-      case 1:
-        return const LectureRecorderPage();
-      case 2:
-        return const ProfilePage();
-      default:
-        return const RuangKelas();
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _computeNavBounds());
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          // Main page content
-          _getCurrentPage(),
-
-          // Only show gaze point and status if we're the active handler
-          if (_shouldHandleNavigation &&
-              _eyeTrackingService.activePageId == 'main_app_scaffold') ...[
-            // Gaze point indicator
-            GazePointWidget(
-              gazeX: _eyeTrackingService.gazeX,
-              gazeY: _eyeTrackingService.gazeY,
-              isVisible: _eyeTrackingService.isTracking,
-            ),
-
-            // Status information
-            // StatusInfoWidget(
-            //   statusMessage: _eyeTrackingService.statusMessage,
-            //   currentPage: _currentIndex + 1,
-            //   totalPages: 3,
-            //   gazeX: _eyeTrackingService.gazeX,
-            //   gazeY: _eyeTrackingService.gazeY,
-            //   currentDwellingElement: _currentDwellingElement,
-            //   dwellProgress: _dwellProgress,
-            // ),
-          ],
-        ],
-      ),
-      bottomNavigationBar: _buildBottomNavigationBar(),
-    );
+  void dispose() {
+    NavGazeBridge.instance.removeListener(_onGazeBusChanged);
+    _pageController.dispose();
+    _cancelDwell();
+    // Jangan hide overlay di sini — mungkin dipakai halaman lain juga
+    super.dispose();
   }
 
-  Widget _buildBottomNavigationBar() {
-    return Container(
-      height: 80,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade300,
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
+  // ====== NAV ======
+  void _navigateTo(int i) {
+    if (i == _index) return;
+    setState(() => _index = i);
+    _pageController.jumpToPage(i);
+  }
+
+  // ====== DWELL ======
+  void _startDwellIfNeeded(VoidCallback onComplete) {
+    _dwellTimer ??= Timer.periodic(const Duration(milliseconds: 50), (t) {
+      _dwellStart ??= DateTime.now();
+      final elapsed = DateTime.now().difference(_dwellStart!);
+      _dwellProgress =
+          (elapsed.inMilliseconds / _dwellTime.inMilliseconds).clamp(0.0, 1.0);
+
+      // Update progress bar di overlay
+      final hi = _hoveredIndex;
+      if (hi != null) {
+        GazeOverlayManager.instance.update(
+          cursor: NavGazeBridge.instance.cursor,
+          visible: NavGazeBridge.instance.isTracking,
+          highlight: _navItemBounds[hi],
+          progress: _dwellProgress,
+        );
+      }
+
+      if (_dwellProgress >= 1.0) {
+        t.cancel();
+        _dwellTimer = null;
+        _dwellStart = null;
+        _dwellProgress = 0.0;
+        onComplete();
+      }
+      setState(() {});
+    });
+  }
+
+  void _cancelDwell() {
+    _dwellTimer?.cancel();
+    _dwellTimer = null;
+    _dwellStart = null;
+    _dwellProgress = 0.0;
+    setState(() {});
+  }
+
+  // ====== HIT-TEST ======
+  int? _hitTestNav(Offset p) {
+    if (_navBarRect == null) return null;
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final expanded = _navBarRect!.inflate(max(0, bottomInset - 1));
+    if (!expanded.contains(p)) return null;
+
+    for (var i = 0; i < _navItemBounds.length; i++) {
+      if (_navItemBounds[i].contains(p)) return i;
+    }
+    return null;
+  }
+
+  void _computeNavBounds() {
+    final navBox = _navBarKey.currentContext?.findRenderObject() as RenderBox?;
+    if (navBox != null && mounted) {
+      final pos = navBox.localToGlobal(Offset.zero);
+      _navBarRect = pos & navBox.size;
+    }
+    for (var i = 0; i < _navKeys.length; i++) {
+      final box = _navKeys[i].currentContext?.findRenderObject() as RenderBox?;
+      if (box == null) continue;
+      final pos = box.localToGlobal(Offset.zero);
+      _navItemBounds[i] = pos & box.size;
+    }
+  }
+
+  // ====== UI ======
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: PageView(
+        controller: _pageController,
+        physics: const NeverScrollableScrollPhysics(),
+        children: const [RuangKelas(), LectureRecorderPage(), ProfilePage()],
       ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            _buildNavItem(0, Icons.home, 'Home', 'nav_home'),
-            _buildNavItem(1, Icons.mic, 'Recorder', 'nav_recorder'),
-            _buildNavItem(2, Icons.person, 'Profile', 'nav_profile'),
-          ],
+      bottomNavigationBar: Material(
+        key: _navBarKey,
+        elevation: 8,
+        color: Colors.white,
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 72,
+            child: Row(
+              children: [
+                _NavItem(
+                  key: _navKeys[0],
+                  label: 'Home',
+                  icon: Icons.home,
+                  selected: _index == 0,
+                  onTap: () => _navigateTo(0),
+                ),
+                _NavItem(
+                  key: _navKeys[1],
+                  label: 'Recorder',
+                  icon: Icons.mic,
+                  selected: _index == 1,
+                  onTap: () => _navigateTo(1),
+                ),
+                _NavItem(
+                  key: _navKeys[2],
+                  label: 'Profile',
+                  icon: Icons.person,
+                  selected: _index == 2,
+                  onTap: () => _navigateTo(2),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildNavItem(
-      int index, IconData icon, String label, String elementId) {
-    final isActive = _currentIndex == index;
-    final isCurrentlyDwelling =
-        _currentDwellingElement == elementId && _shouldHandleNavigation;
+class _NavItem extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
 
+  const _NavItem({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.blue : Colors.black54;
     return Expanded(
-      child: Container(
-        height: 64,
-        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        child: Material(
-          elevation: isCurrentlyDwelling ? 4 : 0,
-          borderRadius: BorderRadius.circular(16),
-          color: Colors.transparent,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: isActive
-                  ? Colors.blue.shade50
-                  : (isCurrentlyDwelling
-                      ? Colors.grey.shade100
-                      : Colors.transparent),
-              border: isCurrentlyDwelling
-                  ? Border.all(color: Colors.blue.shade300, width: 2)
-                  : null,
-            ),
-            child: Stack(
-              children: [
-                // Dwell progress indicator
-                if (isCurrentlyDwelling)
-                  Positioned(
-                    bottom: 4,
-                    left: 8,
-                    right: 8,
-                    child: Container(
-                      height: 3,
-                      child: LinearProgressIndicator(
-                        value: _dwellProgress,
-                        backgroundColor: Colors.grey.shade300,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Colors.blue.shade600,
-                        ),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-
-                // Navigation item content
-                Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        icon,
-                        size: 24,
-                        color: isActive
-                            ? Colors.blue.shade600
-                            : (isCurrentlyDwelling
-                                ? Colors.blue.shade400
-                                : Colors.grey.shade600),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight:
-                              isActive ? FontWeight.w600 : FontWeight.normal,
-                          color: isActive
-                              ? Colors.blue.shade600
-                              : (isCurrentlyDwelling
-                                  ? Colors.blue.shade400
-                                  : Colors.grey.shade600),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 72,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: color),
+              const SizedBox(height: 4),
+              Text(label, style: TextStyle(color: color, fontSize: 12)),
+            ],
           ),
         ),
       ),

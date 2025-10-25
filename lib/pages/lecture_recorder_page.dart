@@ -2,12 +2,18 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math';
+
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+
 import '../services/global_seeso_service.dart';
-import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../mixins/responsive_bounds_mixin.dart';
 import '../models/lecture_note.dart';
 import 'saved_notes_page.dart';
+import '../widgets/nav_gaze_bridge.dart';
+
+// Overlay global (indikator selalu di atas navbar)
+import '../widgets/gaze_overlay_manager.dart';
 
 class LectureRecorderPage extends StatefulWidget {
   const LectureRecorderPage({super.key});
@@ -18,16 +24,17 @@ class LectureRecorderPage extends StatefulWidget {
 
 class _LectureRecorderPageState extends State<LectureRecorderPage>
     with ResponsiveBoundsMixin, TickerProviderStateMixin {
+  // Eye tracking
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
-  // Dwell time selection state
+  // Dwell state
   String? _currentDwellingElement;
   double _dwellProgress = 0.0;
   Timer? _dwellTimer;
   DateTime? _dwellStartTime;
 
-  // Dwell time configuration
+  // Dwell config
   static const int _controlDwellTimeMs = 1000;
   static const int _buttonDwellTimeMs = 1500;
   static const int _dwellUpdateIntervalMs = 50;
@@ -39,66 +46,16 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   Timer? _recordingTimer;
   DateTime? _recordingStartTime;
 
-  // Speech-to-text simulation
+  // Speech-to-text
+  late stt.SpeechToText _speech;
+  bool _speechAvailable = false;
   String _transcriptionText = '';
-  Timer? _transcriptionTimer;
-  final List<String> _sampleWords = [
-    'Today',
-    'we',
-    'will',
-    'discuss',
-    'the',
-    'fundamental',
-    'concepts',
-    'of',
-    'mathematics',
-    'including',
-    'algebra',
-    'geometry',
-    'and',
-    'calculus',
-    'These',
-    'topics',
-    'are',
-    'essential',
-    'for',
-    'understanding',
-    'advanced',
-    'mathematical',
-    'principles',
-    'Let',
-    'us',
-    'begin',
-    'with',
-    'basic',
-    'equations',
-    'and',
-    'their',
-    'solutions',
-    'Remember',
-    'to',
-    'take',
-    'notes',
-    'and',
-    'ask',
-    'questions',
-    'if',
-    'anything',
-    'is',
-    'unclear',
-    'Practice',
-    'makes',
-    'perfect',
-    'in',
-    'mathematics',
-    'education'
-  ];
-  int _currentWordIndex = 0;
+  double _soundLevel = 0.0; // 0..1 diset dari onSoundLevelChange
 
   // Saved notes
   final List<LectureNote> _savedNotes = [];
 
-  // Animation controllers
+  // Animations (pulse mengikuti mic level saat recording)
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -112,25 +69,23 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   @override
   void initState() {
     super.initState();
-    print("DEBUG: LectureRecorderPage initState");
     _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.setActivePage('lecture_recorder', _onEyeTrackingUpdate);
 
-    // Initialize animation
+    // Pulse anim (idle jalan halus; saat record skala dipengaruhi mic level)
     _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 900),
       vsync: this,
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-    _pulseAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.2,
-    ).animate(CurvedAnimation(
-      parent: _pulseController,
-      curve: Curves.easeInOut,
-    ));
+
+    _speech = stt.SpeechToText();
 
     _initializeElementKeys();
     _initializeEyeTracking();
+    _initSpeech();
     updateBoundsAfterBuild();
   }
 
@@ -142,22 +97,76 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     generateKeyForElement('save_button');
     generateKeyForElement('clear_button');
     generateKeyForElement('saved_notes_button');
+  }
 
-    print("DEBUG: Generated ${elementCount} element keys using mixin");
+  Future<void> _initSpeech() async {
+    try {
+      final available = await _speech.initialize(
+        onError: (e) {
+          if (!_isDisposed && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Speech error: ${e.errorMsg}'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        },
+        onStatus: (status) {
+          // status: listening, notListening
+        },
+        debugLogging: false,
+      );
+      if (!_isDisposed && mounted) {
+        setState(() {
+          _speechAvailable = available;
+        });
+      }
+      if (!available && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Speech-to-text tidak tersedia. Pastikan izin mikrofon aktif.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _speechAvailable = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal inisialisasi STT: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
     _isDisposed = true;
+
     _dwellTimer?.cancel();
     _recordingTimer?.cancel();
-    _transcriptionTimer?.cancel();
+
+    try {
+      _speech.stop();
+      _speech.cancel();
+    } catch (_) {}
+
     _pulseController.dispose();
 
     _eyeTrackingService.removePage('lecture_recorder');
     clearBounds();
 
-    print("DEBUG: LectureRecorderPage disposed");
+    // Matikan HUD jika halaman ini terakhir update
+    GazeOverlayManager.instance.hide();
+
     super.dispose();
   }
 
@@ -173,12 +182,21 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
+    NavGazeBridge.instance
+        .update(currentGazePoint, _eyeTrackingService.isTracking);
+
+    // HUD global
+    GazeOverlayManager.instance.update(
+      cursor: currentGazePoint,
+      visible: _eyeTrackingService.isTracking,
+      highlight: null,
+    );
+
+    // Logika dwell
     String? hoveredElement = getElementAtPoint(currentGazePoint);
 
     if (hoveredElement != null) {
       if (_currentDwellingElement != hoveredElement) {
-        print(
-            "DEBUG: LectureRecorderPage - Started dwelling on: $hoveredElement");
         _handleElementHover(hoveredElement);
       }
     } else {
@@ -202,7 +220,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
           action = _startRecording;
           dwellTime = _controlDwellTimeMs;
         } else {
-          return; // Don't allow starting when already recording
+          return;
         }
         break;
       case 'pause_button':
@@ -250,14 +268,9 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
   Future<void> _initializeEyeTracking() async {
     if (_isDisposed || !mounted) return;
-
     try {
-      print("DEBUG: Initializing eye tracking in LectureRecorderPage");
       await _eyeTrackingService.initialize(context);
-      print(
-          "DEBUG: Eye tracking successfully initialized in LectureRecorderPage");
     } catch (e) {
-      print('Eye tracking initialization failed: $e');
       if (mounted && !_isDisposed) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -325,24 +338,77 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     }
   }
 
+  // ========= SPEECH CONTROL =========
+
+  Future<void> _startListening() async {
+    if (!_speechAvailable) {
+      await _initSpeech();
+      if (!_speechAvailable) return;
+    }
+
+    // Mode dictation untuk continuous + partial results
+    await _speech.listen(
+      onResult: (res) {
+        if (!mounted || _isDisposed) return;
+        setState(() {
+          _transcriptionText = res.recognizedWords;
+        });
+      },
+      listenMode: stt.ListenMode.dictation,
+      partialResults: true,
+      onSoundLevelChange: (level) {
+        if (!mounted || _isDisposed) return;
+        // level biasanya 0..xx (platform-dependent). Normalisasi kasar ke 0..1
+        final normalized = (level / 30).clamp(0.0, 1.0);
+        setState(() => _soundLevel = normalized);
+      },
+      cancelOnError: false,
+      pauseFor: const Duration(seconds: 3), // otomatis pause jika hening
+      sampleRate: 44100,
+      // localeId: 'id_ID', // aktifkan kalau ingin paksa bahasa Indonesia
+    );
+  }
+
+  Future<void> _stopListening() async {
+    try {
+      await _speech.stop();
+    } catch (_) {}
+  }
+
+  Future<void> _cancelListening() async {
+    try {
+      await _speech.cancel();
+    } catch (_) {}
+  }
+
   void _startRecording() {
     if (_isDisposed || !mounted || _isRecording) return;
     _stopDwellTimer();
+
+    if (!_speechAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Speech-to-text tidak tersedia / izin mikrofon belum diberikan.'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
 
     setState(() {
       _isRecording = true;
       _isPaused = false;
       _recordingDuration = Duration.zero;
       _transcriptionText = '';
-      _currentWordIndex = 0;
     });
 
     _recordingStartTime = DateTime.now();
 
-    // Start recording timer
-    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _recordingTimer?.cancel();
+    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isRecording || _isPaused) return;
-
       if (mounted && !_isDisposed) {
         setState(() {
           _recordingDuration = DateTime.now().difference(_recordingStartTime!);
@@ -350,11 +416,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       }
     });
 
-    // Start transcription simulation
-    _startTranscriptionSimulation();
-
-    // Start pulse animation
-    _pulseController.repeat(reverse: true);
+    _startListening();
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -373,8 +435,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       _isPaused = true;
     });
 
-    _transcriptionTimer?.cancel();
-    _pulseController.stop();
+    _stopListening(); // stop tanpa menghapus teks
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -393,8 +454,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       _isPaused = false;
     });
 
-    _startTranscriptionSimulation();
-    _pulseController.repeat(reverse: true);
+    _startListening();
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -415,8 +475,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     });
 
     _recordingTimer?.cancel();
-    _transcriptionTimer?.cancel();
-    _pulseController.stop();
+    _stopListening();
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -427,40 +486,15 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     );
   }
 
-  void _startTranscriptionSimulation() {
-    _transcriptionTimer = Timer.periodic(
-      Duration(
-          milliseconds: 800 + Random().nextInt(1200)), // 0.8-2.0s intervals
-      (timer) {
-        if (!_isRecording || _isPaused || _isDisposed || !mounted) {
-          timer.cancel();
-          return;
-        }
-
-        if (_currentWordIndex < _sampleWords.length) {
-          setState(() {
-            if (_transcriptionText.isNotEmpty) {
-              _transcriptionText += ' ';
-            }
-            _transcriptionText += _sampleWords[_currentWordIndex];
-            _currentWordIndex++;
-          });
-        } else {
-          timer.cancel();
-        }
-      },
-    );
-  }
-
   void _saveNote() {
-    if (_isDisposed || !mounted || _transcriptionText.isEmpty) return;
+    if (_isDisposed || !mounted || _transcriptionText.trim().isEmpty) return;
     _stopDwellTimer();
 
     final note = LectureNote(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title:
           'Lecture ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
-      content: _transcriptionText,
+      content: _transcriptionText.trim(),
       duration: _recordingDuration,
       timestamp: DateTime.now(),
     );
@@ -485,7 +519,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     setState(() {
       _transcriptionText = '';
       _recordingDuration = Duration.zero;
-      _currentWordIndex = 0;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -501,7 +534,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     if (_isDisposed || !mounted) return;
     _stopDwellTimer();
 
-    // Don't navigate if currently recording
     if (_isRecording) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -549,6 +581,12 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     final isCurrentlyDwelling = _currentDwellingElement == elementId;
     final key = generateKeyForElement(elementId);
 
+    // Skala dinamis: saat recording & mic aktif, pakai soundLevel untuk pulse
+    final dynamicScale =
+        (_isRecording && !_isPaused && elementId == 'record_button')
+            ? (1.0 + (_soundLevel * 0.25)) // 1.0..1.25
+            : 1.0;
+
     return Container(
       key: key,
       width: size,
@@ -589,12 +627,13 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                     AnimatedBuilder(
                       animation: _pulseAnimation,
                       builder: (context, child) {
+                        final baseScale = (_isRecording &&
+                                elementId == 'record_button' &&
+                                !_isPaused)
+                            ? _pulseAnimation.value
+                            : 1.0;
                         return Transform.scale(
-                          scale: (_isRecording &&
-                                  elementId == 'record_button' &&
-                                  !_isPaused)
-                              ? _pulseAnimation.value
-                              : 1.0,
+                          scale: baseScale * dynamicScale,
                           child: Icon(
                             icon,
                             color:
@@ -625,6 +664,11 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   }
 
   Widget _buildStatusCard() {
+    final wordsCount = _transcriptionText
+        .split(RegExp(r'\s+'))
+        .where((w) => w.trim().isNotEmpty)
+        .length;
+
     return Container(
       margin: const EdgeInsets.all(20),
       padding: const EdgeInsets.all(20),
@@ -658,7 +702,9 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
               Text(
                 _isRecording
                     ? (_isPaused ? 'Recording Paused' : 'Recording Active')
-                    : 'Ready to Record',
+                    : (_speechAvailable
+                        ? 'Ready to Record'
+                        : 'Speech not available'),
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -666,7 +712,9 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                       ? (_isPaused
                           ? Colors.orange.shade800
                           : Colors.green.shade800)
-                      : Colors.grey.shade700,
+                      : (_speechAvailable
+                          ? Colors.grey.shade700
+                          : Colors.red.shade700),
                 ),
               ),
             ],
@@ -710,7 +758,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                       ),
                     ),
                     Text(
-                      '${_transcriptionText.split(' ').where((word) => word.isNotEmpty).length}',
+                      '$wordsCount',
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
@@ -772,7 +820,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                               bottom: 0,
                               left: 0,
                               right: 0,
-                              child: Container(
+                              child: SizedBox(
                                 height: 2,
                                 child: LinearProgressIndicator(
                                   value: _dwellProgress,
@@ -834,7 +882,9 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                 child: SingleChildScrollView(
                   child: Text(
                     _transcriptionText.isEmpty
-                        ? 'Transcription will appear here when recording starts...'
+                        ? (_speechAvailable
+                            ? 'Mulai rekam untuk melihat transkripsi real-time di sini...'
+                            : 'Speech-to-text tidak tersedia. Cek izin mikrofon / service STT.')
                         : _transcriptionText,
                     style: TextStyle(
                       fontSize: 16,
@@ -883,6 +933,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     return Scaffold(
       body: Stack(
         children: [
+          // Background + content
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -970,7 +1021,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                                   label: _isRecording ? 'Recording' : 'Record',
                                   color:
                                       _isRecording ? Colors.red : Colors.green,
-                                  isEnabled: !_isRecording,
+                                  isEnabled: !_isRecording && _speechAvailable,
                                 ),
                                 _buildControlButton(
                                   elementId: 'pause_button',
@@ -1003,24 +1054,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                 ],
               ),
             ),
-          ),
-
-          // Gaze point indicator
-          GazePointWidget(
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            isVisible: _eyeTrackingService.isTracking,
-          ),
-
-          // Status information
-          StatusInfoWidget(
-            statusMessage: _eyeTrackingService.statusMessage,
-            currentPage: 2,
-            totalPages: 3,
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            currentDwellingElement: _currentDwellingElement,
-            dwellProgress: _dwellProgress,
           ),
         ],
       ),

@@ -212,7 +212,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _navigateToMainApp(); // CHANGED: Navigate to MainAppScaffold
+                _navigateToMainApp();
               },
               child: const Text('Skip'),
             ),
@@ -232,8 +232,7 @@ class _EyeCalibrationPageState extends State<EyeCalibrationPage>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            const MainAppScaffold(
-                initialIndex: 1), // Start with Home (RuangKelas)
+            const MainAppScaffold(), // Start with Home (RuangKelas)
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(
             opacity: animation,

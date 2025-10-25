@@ -1,14 +1,17 @@
 // File: lib/pages/ruang_kelas.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
+
 import '../models/subject.dart';
 import '../models/topic.dart';
 import '../models/question.dart';
 import '../services/global_seeso_service.dart';
-import '../widgets/gaze_point_widget.dart';
 import '../widgets/status_info_widget.dart';
 import '../mixins/responsive_bounds_mixin.dart';
 import 'subject_details_page.dart';
+import '../widgets/nav_gaze_bridge.dart';
+// >>> TAMBAH: overlay global (indikator selalu paling atas)
+import '../widgets/gaze_overlay_manager.dart';
 
 class RuangKelas extends StatefulWidget {
   const RuangKelas({super.key});
@@ -41,7 +44,6 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
   @override
   void initState() {
     super.initState();
-    print("DEBUG: RuangKelas initState - setting as active page");
     _eyeTrackingService = GlobalSeesoService();
     _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
 
@@ -65,7 +67,9 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     // Clean up mixin resources
     clearBounds();
 
-    print("DEBUG: RuangKelas disposed and removed from service");
+    // MATIKAN HUD global bila halaman ini yg terakhir update
+    GazeOverlayManager.instance.hide();
+
     super.dispose();
   }
 
@@ -74,7 +78,6 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     for (final subject in subjects) {
       generateKeyForElement(subject.id);
     }
-    print("DEBUG: Generated ${elementCount} subject keys using mixin");
   }
 
   @override
@@ -90,7 +93,20 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     final currentGazePoint =
         Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    // Use mixin's precise hit detection
+    NavGazeBridge.instance
+        .update(currentGazePoint, _eyeTrackingService.isTracking);
+
+    // >>> UPDATE HUD GLOBAL — indikator hijau SELALU di root overlay (anti overlap)
+    GazeOverlayManager.instance.update(
+      cursor: currentGazePoint,
+      visible: _eyeTrackingService.isTracking,
+      // bisa kirim highlight = rect kartu yang sedang dwell kalau mau
+      // untuk simpel, biarkan null
+      highlight: null,
+    );
+    // <<< END HUD UPDATE
+
+    // Use mixin's precise hit detection (untuk dwell di kartu pelajaran)
     String? hoveredButton = getElementAtPoint(currentGazePoint);
 
     if (hoveredButton != null) {
@@ -100,14 +116,11 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
           (s) => s.id == hoveredButton,
           orElse: () => subjects.first,
         );
-        print("DEBUG: RuangKelas - Started dwelling on: $hoveredButton");
         _startDwellTimer(
             hoveredButton, () => _navigateToSubjectDetails(subject));
       }
     } else {
       if (_currentDwellingElement != null) {
-        print(
-            "DEBUG: RuangKelas - Stopped dwelling on: $_currentDwellingElement");
         _stopDwellTimer();
       }
     }
@@ -121,12 +134,9 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     if (_isDisposed || !mounted) return;
 
     try {
-      print("DEBUG: Initializing eye tracking in RuangKelas");
       await _eyeTrackingService.initialize(context);
-      print("DEBUG: Eye tracking successfully initialized in RuangKelas");
       _eyeTrackingService.debugPrintStatus();
     } catch (e) {
-      print('Eye tracking initialization failed: $e');
       if (mounted && !_isDisposed) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -217,7 +227,6 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
     )
         .then((_) {
       if (!_isDisposed && mounted) {
-        print("DEBUG: Returned to RuangKelas, reactivating");
         _eyeTrackingService.setActivePage('ruang_kelas', _onEyeTrackingUpdate);
         // Recalculate bounds when returning
         updateBoundsAfterBuild();
@@ -305,6 +314,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
   }
 
   List<Question> _getEnglishQuestions() {
+    /* ... tetap sama ... */
     return [
       Question(
         id: 'q1',
@@ -347,6 +357,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
   }
 
   List<Question> _getMathQuestions() {
+    /* ... tetap sama ... */
     return [
       Question(
         id: 'q1',
@@ -388,6 +399,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
   }
 
   List<Question> _getScienceQuestions() {
+    /* ... tetap sama ... */
     return [
       Question(
         id: 'q1',
@@ -451,11 +463,8 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
                             color: Colors.white.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Icon(
-                            Icons.menu,
-                            color: Colors.white,
-                            size: 24,
-                          ),
+                          child: const Icon(Icons.menu,
+                              color: Colors.white, size: 24),
                         ),
                         const Expanded(
                           child: Text(
@@ -474,11 +483,8 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
                             color: Colors.white.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Icon(
-                            Icons.visibility,
-                            color: Colors.blue,
-                            size: 24,
-                          ),
+                          child: const Icon(Icons.visibility,
+                              color: Colors.blue, size: 24),
                         ),
                       ],
                     ),
@@ -494,11 +500,8 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
                           children: [
                             Row(
                               children: [
-                                const Icon(
-                                  Icons.wb_sunny,
-                                  color: Colors.yellow,
-                                  size: 20,
-                                ),
+                                const Icon(Icons.wb_sunny,
+                                    color: Colors.yellow, size: 20),
                                 const SizedBox(width: 8),
                                 Text(
                                   'SELAMAT DATANG!',
@@ -529,11 +532,8 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
                             color: Colors.pink.shade300,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
-                            Icons.person,
-                            color: Colors.white,
-                            size: 30,
-                          ),
+                          child: const Icon(Icons.person,
+                              color: Colors.white, size: 30),
                         ),
                       ],
                     ),
@@ -541,7 +541,7 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
 
                   const SizedBox(height: 30),
 
-                  // Subject Cards with responsive bounds using mixin
+                  // Subject Cards
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -664,24 +664,6 @@ class _RuangKelasState extends State<RuangKelas> with ResponsiveBoundsMixin {
               ),
             ),
           ),
-
-          // Gaze point indicator
-          GazePointWidget(
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            isVisible: _eyeTrackingService.isTracking,
-          ),
-
-          // // Status information
-          // StatusInfoWidget(
-          //   statusMessage: _eyeTrackingService.statusMessage,
-          //   currentPage: 1,
-          //   totalPages: 3,
-          //   gazeX: _eyeTrackingService.gazeX,
-          //   gazeY: _eyeTrackingService.gazeY,
-          //   currentDwellingElement: _currentDwellingElement,
-          //   dwellProgress: _dwellProgress,
-          // ),
         ],
       ),
     );
