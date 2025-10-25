@@ -8,7 +8,8 @@ import 'widgets/gaze_overlay_manager.dart'; // <-- manager overlay global
 
 final GlobalKey<NavigatorState> rootNavKey = GlobalKey<NavigatorState>();
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
