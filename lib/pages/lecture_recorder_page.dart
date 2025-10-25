@@ -4,14 +4,13 @@ import 'package:whisper_flutter_new/download_model.dart';
 import 'dart:async';
 
 import '../services/global_seeso_service.dart';
-import '../widgets/status_info_widget.dart';
 import '../mixins/responsive_bounds_mixin.dart';
 import '../models/lecture_note.dart';
 import 'saved_notes_page.dart';
 import '../widgets/nav_gaze_bridge.dart';
 import '../widgets/gaze_overlay_manager.dart';
 
-// STT on-device (Whisper)
+// Offline STT (Whisper)
 import '../services/stt/speech_engine.dart';
 import '../services/stt/whisper_speech_engine.dart';
 
@@ -49,17 +48,17 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   bool _sttAvailable = false;
   String _transcriptionText = '';
 
-  // Saved notes
+  // Notes
   final List<LectureNote> _savedNotes = [];
 
-  // Pulse anim
+  // Pulse
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
   @override
   double get boundsUpdateDelay => 150.0;
   @override
-  bool get enableBoundsLogging => true;
+  bool get enableBoundsLogging => false;
 
   @override
   void initState() {
@@ -72,13 +71,11 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       vsync: this,
     )..repeat(reverse: true);
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
 
-    // init Whisper engine (offline, Bahasa Indonesia)
+    // Whisper engine (Indonesian)
     _stt = WhisperSpeechEngine(
-      model: WhisperModel.small, // small: balance speed/accuracy utk ID
-      chunkSecs: 8,
+      model: WhisperModel.small,
       language: 'id',
       translateToEnglish: false,
     );
@@ -90,15 +87,18 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
   }
 
   Future<void> _initStt() async {
-    final ok = await _stt.init();
-    if (!mounted) return;
-    setState(() => _sttAvailable = ok);
-    if (!ok) {
+    try {
+      final ok =
+          await _stt.init(); // returns true even if model not downloaded yet
+      if (!mounted) return;
+      setState(() => _sttAvailable = ok);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sttAvailable = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Whisper offline belum siap (model/izin).'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(
+            content: Text('Whisper init failed: $e'),
+            backgroundColor: Colors.red),
       );
     }
   }
@@ -112,17 +112,18 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     generateKeyForElement('saved_notes_button');
   }
 
+  /// Initialize any eye-tracking subscriptions or state required by this page.
+  /// Defines the previously missing _initializeEyeTracking method so calls in
+  /// initState compile correctly.
   void _initializeEyeTracking() {
-    // Ensure the eye-tracking service is subscribed for this page and bounds are updated.
-    // Calling setActivePage again is idempotent and ensures the callback is registered.
-    try {
-      _eyeTrackingService.setActivePage(
-          'lecture_recorder', _onEyeTrackingUpdate);
-      // Make sure bounds are updated after making tracking active
-      updateBoundsAfterBuild();
-    } catch (_) {
-      // If the service isn't ready for some reason, ignore the error to avoid crashes.
-    }
+    // Ensure the service knows this page and will call our update callback.
+    _eyeTrackingService.setActivePage('lecture_recorder', _onEyeTrackingUpdate);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    updateBoundsAfterBuild();
   }
 
   @override
@@ -138,12 +139,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     clearBounds();
     GazeOverlayManager.instance.hide();
     super.dispose();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    updateBoundsAfterBuild();
   }
 
   void _onEyeTrackingUpdate() {
@@ -168,6 +163,11 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     }
 
     if (mounted && !_isDisposed) setState(() {});
+  }
+
+  @override
+  void onRecalculateBounds(Size screenSize, double dpr) {
+    // No-op here; your page can log or store rects if needed.
   }
 
   void _handleElementHover(String elementId) {
@@ -222,7 +222,6 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       default:
         return;
     }
-
     _startDwellTimer(elementId, action, dwellTime);
   }
 
@@ -267,7 +266,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     });
   }
 
-  // ====== RECORD CONTROL ======
+  // ===== Recording controls =====
 
   void _startRecording() async {
     if (_isDisposed || !mounted || _isRecording) return;
@@ -275,8 +274,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
 
     if (!_sttAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Whisper offline belum siap.'),
-          backgroundColor: Colors.red));
+          content: Text('STT belum siap.'), backgroundColor: Colors.red));
       return;
     }
 
@@ -296,8 +294,13 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
       });
     });
 
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content:
+          Text('Jika pertama kali, model Whisper akan diunduh (sekali saja).'),
+      duration: Duration(seconds: 2),
+    ));
+
     await _stt.start(
-      onPartial: (p) {}, // Whisper file-based -> kita pakai onFinal tiap slice
       onFinal: (r) {
         if (!mounted) return;
         setState(() {
@@ -318,7 +321,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
     );
 
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Recording started (offline Whisper)'),
+        content: Text('Recording started'),
         backgroundColor: Colors.green,
         duration: Duration(seconds: 1)));
   }
@@ -543,9 +546,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
             Text(
               _isRecording
                   ? (_isPaused ? 'Recording Paused' : 'Recording Active')
-                  : (_sttAvailable
-                      ? 'Ready to Record (offline, Whisper)'
-                      : 'Offline STT not available'),
+                  : (_sttAvailable ? 'Ready to Record' : 'STT not available'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -633,45 +634,24 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                             : Colors.grey.shade300,
                       ),
                     ),
-                    child: Stack(
-                      children: [
-                        if (_currentDwellingElement == 'saved_notes_button')
-                          Positioned(
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
-                            child: SizedBox(
-                              height: 2,
-                              child: LinearProgressIndicator(
-                                value: _dwellProgress,
-                                backgroundColor: Colors.transparent,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.blue.shade600),
-                              ),
-                            ),
-                          ),
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.folder,
-                              size: 16,
-                              color: _currentDwellingElement ==
-                                      'saved_notes_button'
-                                  ? Colors.blue.shade600
-                                  : Colors.grey.shade600),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Saved Notes (${_savedNotes.length})',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: _currentDwellingElement ==
-                                      'saved_notes_button'
-                                  ? Colors.blue.shade600
-                                  : Colors.grey.shade700,
-                            ),
-                          ),
-                        ]),
-                      ],
-                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.folder,
+                          size: 16,
+                          color: _currentDwellingElement == 'saved_notes_button'
+                              ? Colors.blue.shade600
+                              : Colors.grey.shade600),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Saved Notes (${_savedNotes.length})',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: _currentDwellingElement == 'saved_notes_button'
+                              ? Colors.blue.shade600
+                              : Colors.grey.shade700,
+                        ),
+                      ),
+                    ]),
                   ),
                 ),
               ),
@@ -696,8 +676,8 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                   child: Text(
                     _transcriptionText.isEmpty
                         ? (_sttAvailable
-                            ? 'Mulai rekam — transkripsi offline (Whisper) akan muncul tiap beberapa detik...'
-                            : 'Offline STT tidak tersedia. Pastikan izin mikrofon & model terunduh.')
+                            ? 'Mulai rekam: transkripsi akan muncul tiap beberapa detik...'
+                            : 'STT tidak tersedia. Pastikan izin mikrofon & model terunduh.')
                         : _transcriptionText,
                     style: TextStyle(
                       fontSize: 16,
@@ -763,7 +743,7 @@ class _LectureRecorderPageState extends State<LectureRecorderPage>
                         const Icon(Icons.menu, color: Colors.white, size: 20),
                   ),
                   const Expanded(
-                    child: Text('Lecture Recorder (Offline Whisper)',
+                    child: Text('Lecture Recorder',
                         style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,

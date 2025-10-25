@@ -1,26 +1,33 @@
 // File: lib/services/stt/whisper_speech_engine.dart
 import 'dart:async';
 import 'dart:io';
+
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:whisper_flutter_new/whisper_flutter_new.dart';
 
 import 'speech_engine.dart';
 
-/// Engine Whisper on-device berbasis file dengan "near-realtime" chunking.
-/// Mekanisme:
-/// - start(): mulai rekam WAV ke file rolling
-/// - tiap [_chunkSecs] detik: potong salinan audio -> transcribe async -> kirim onPartial/onFinal
+/// Whisper is non-streaming. We emulate "live" by recording short segments
+/// (2-3s), immediately transcribing each segment in the background, and
+/// appending the text to UI. This avoids huge files and 30s-crash issues.
+///
+/// Key points:
+/// - Rotating files: stop -> emit segment -> start next segment quickly
+/// - Concurrency guard: transcribe queue processed one-by-one
+/// - Small/base model for lower RAM usage
+/// - Works offline after first model download
 class WhisperSpeechEngine implements SpeechEngine {
   WhisperSpeechEngine({
-    this.model = WhisperModel.small, // small: akurasi & size OK untuk id
-    this.chunkSecs = 8, // jeda transcribe "near realtime"
-    this.language = 'id', // paksa bahasa Indonesia
-    this.translateToEnglish = false, // jangan translate; transkrip asli
-  });
+    this.model = WhisperModel
+        .base, // use base for stability; tiny is faster but less accurate
+    this.segmentSeconds = 3, // “near-live” latency
+    this.language = 'id', // Indonesian
+    this.translateToEnglish = false,
+  }) : assert(segmentSeconds >= 2 && segmentSeconds <= 10);
 
   final WhisperModel model;
-  final int chunkSecs;
+  final int segmentSeconds;
   final String language;
   final bool translateToEnglish;
 
@@ -29,10 +36,17 @@ class WhisperSpeechEngine implements SpeechEngine {
 
   bool _available = false;
   bool _isRecording = false;
-  Timer? _chunkTimer;
+  bool _isPaused = false;
 
-  late String _rollingWavPath;
-  int _lastBytesRead = 0; // untuk men-slice bagian baru saja
+  Timer? _rotateTimer;
+  Directory? _tmpDir;
+
+  // current active segment (being recorded)
+  String? _currentSegPath;
+
+  // queue of closed segments waiting to be transcribed
+  final List<String> _pending = <String>[];
+  bool _isTranscribing = false;
 
   double _soundLevel = 0.0;
   @override
@@ -43,138 +57,175 @@ class WhisperSpeechEngine implements SpeechEngine {
 
   @override
   Future<bool> init() async {
-    // siapkan instance Whisper (auto download model dari HF)
     _whisper = Whisper(
       model: model,
       downloadHost: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main",
     );
-    // cek versi -> sekaligus trigger lib siap
+
+    // Don’t fail init just because the model isn’t downloaded yet.
     try {
       await _whisper!.getVersion();
     } catch (_) {
-      // tetap lanjut; library akan unduh saat transcribe pertama
+      // ignore — model will be pulled on first transcribe if not cached
     }
+
+    _tmpDir = await getTemporaryDirectory();
     _available = true;
     return true;
   }
 
   @override
   Future<void> start({
-    void Function(String partial)? onPartial,
+    void Function(String partial)?
+        onPartial, // Whisper can't yield true partials
     void Function(String result)? onFinal,
     void Function(Object error)? onError,
   }) async {
     if (!_available || _isRecording) return;
 
-    final dir = await getTemporaryDirectory();
-    _rollingWavPath = '${dir.path}/dgz_rec.wav';
-    _lastBytesRead = 0;
-
-    // Mulai rekam WAV 16k mono
-    final config = RecordConfig(
-      encoder: AudioEncoder.wav,
-      bitRate: 128000,
-      sampleRate: 16000,
-      numChannels: 1,
-    );
-
+    // mic permission via `record`
     if (!await _recorder.hasPermission()) {
       onError?.call(StateError('Mic permission denied'));
       return;
     }
 
-    await _recorder.start(config, path: _rollingWavPath);
     _isRecording = true;
+    _isPaused = false;
 
-    // timer chunk untuk near-realtime
-    _chunkTimer?.cancel();
-    _chunkTimer = Timer.periodic(Duration(seconds: chunkSecs), (_) async {
+    // start first fresh segment
+    await _startNewSegment(onError);
+
+    // rotate every N seconds
+    _rotateTimer?.cancel();
+    _rotateTimer = Timer.periodic(Duration(seconds: segmentSeconds), (_) async {
+      if (!_isRecording || _isPaused) return;
       try {
-        // update "meter" pseudo level agar tombol berdenyut
-        _soundLevel = 0.8;
+        // little “VU meter” bump for UI pulse
+        _soundLevel = 0.9;
         Future.delayed(
-            const Duration(milliseconds: 250), () => _soundLevel = 0.2);
+            const Duration(milliseconds: 200), () => _soundLevel = 0.2);
 
-        final file = File(_rollingWavPath);
-        if (!await file.exists()) return;
-
-        final totalBytes = await file.length();
-        if (totalBytes <= _lastBytesRead) return;
-
-        // salin segmen baru (dari _lastBytesRead -> totalBytes)
-        final slicePath =
-            '${dir.path}/dgz_slice_${DateTime.now().millisecondsSinceEpoch}.wav';
-        await _copyTail(file, slicePath, fromByte: _lastBytesRead);
-        _lastBytesRead = totalBytes;
-
-        // transcribe segmen (non-blocking)
-        unawaited(_transcribeFile(
-          slicePath,
-          onPartial: onPartial,
-          onFinal: onFinal,
-          onError: onError,
-        ));
+        await _rotateSegment(onError);
+        // kick background worker
+        _drainQueue(onFinal, onError);
       } catch (e) {
         onError?.call(e);
       }
     });
   }
 
-  Future<void> _transcribeFile(
-    String wavPath, {
-    void Function(String partial)? onPartial,
-    void Function(String result)? onFinal,
+  Future<void> _startNewSegment(
     void Function(Object error)? onError,
-  }) async {
+  ) async {
     try {
-      // NB: plugin ini output JSON string; by default kita minta tanpa timestamp biar simple
-      final resp = await _whisper!.transcribe(
-        transcribeRequest: TranscribeRequest(
-          audio: wavPath,
-          isTranslate: translateToEnglish,
-          isNoTimestamps: true,
-          language: language, // 'id' -> Indonesian
-          splitOnWord: false,
-        ),
+      _currentSegPath =
+          '${_tmpDir!.path}/dgz_${DateTime.now().millisecondsSinceEpoch}.wav';
+      final cfg = RecordConfig(
+        encoder: AudioEncoder.wav,
+        bitRate: 128000,
+        sampleRate: 16000,
+        numChannels: 1,
       );
-
-      // respons bisa berupa String atau object; ambil teks final dengan aman
-      final dynamic d = resp;
-      final String text = d is String
-          ? d
-          : (d.text ?? d.result ?? d.transcript ?? d.toString()) as String;
-
-      if (text.trim().isNotEmpty) {
-        onFinal?.call(text.trim());
-      }
+      await _recorder.start(cfg, path: _currentSegPath!);
     } catch (e) {
       onError?.call(e);
-    } finally {
-      // hapus slice agar tidak menumpuk
-      try {
-        await File(wavPath).delete();
-      } catch (_) {}
     }
   }
 
-  /// Menyalin tail WAV dari offset byte tertentu termasuk header fix sederhana:
-  /// Untuk kesederhanaan kita salin keseluruhan file ke slice, karena encoder WAV di `record`
-  /// mengisi header final saat stop. Ini berarti chunk pertama saja yg besar, sisanya kecil
-  /// (tetap bekerja untuk near-realtime meski tidak ideal). Alternatif: rekam ke file baru
-  /// setiap interval (lebih kecil), tapi ada klik re-init encoder; implementasi ini stabil.
-  Future<void> _copyTail(File src, String dest, {required int fromByte}) async {
-    final bytes = await src.readAsBytes();
-    // amankan indeks
-    final start = (fromByte <= 0 || fromByte >= bytes.length) ? 0 : fromByte;
-    // tulis slice (header+audio penuh jika start==0, atau tail raw -> Whisper masih bisa baca sebagian besar WAV)
-    // Jika ada isu pada beberapa device, ganti strategi: stop() lalu start() tiap interval (lihat catatan).
-    await File(dest).writeAsBytes(bytes.sublist(start));
+  Future<void> _rotateSegment(
+    void Function(Object error)? onError,
+  ) async {
+    // stop current
+    try {
+      if (await _recorder.isRecording()) {
+        await _recorder.stop();
+      }
+    } catch (e) {
+      onError?.call(e);
+    }
+
+    // enqueue the finished file for transcription
+    if (_currentSegPath != null) {
+      final f = File(_currentSegPath!);
+      if (await f.exists() && await f.length() > 44) {
+        // >44 bytes to avoid empty WAV header-only
+        _pending.add(_currentSegPath!);
+      } else {
+        // delete empty file
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    }
+
+    // start next segment ASAP to keep recording continuous
+    await _startNewSegment(onError);
+  }
+
+  void _drainQueue(
+    void Function(String result)? onFinal,
+    void Function(Object error)? onError,
+  ) {
+    if (_isTranscribing) return;
+    _isTranscribing = true;
+
+    Future<void>(() async {
+      while (_pending.isNotEmpty) {
+        final path = _pending.removeAt(0);
+        try {
+          final text = await _transcribe(path);
+          final t = text.trim();
+          if (t.isNotEmpty) onFinal?.call(t);
+        } catch (e) {
+          onError?.call(e);
+        } finally {
+          try {
+            await File(path).delete();
+          } catch (_) {}
+        }
+      }
+      _isTranscribing = false;
+    });
+  }
+
+  Future<String> _transcribe(String wavPath) async {
+    final resp = await _whisper!.transcribe(
+      transcribeRequest: TranscribeRequest(
+        audio: wavPath,
+        isTranslate: translateToEnglish,
+        isNoTimestamps: true,
+        language: language,
+        splitOnWord: false,
+      ),
+    );
+
+    // ---- Safe extract text from WhisperTranscribeResponse ----
+    String _extract(dynamic r) {
+      try {
+        final text1 = (r.text ?? r.result?.text ?? '').toString();
+        if (text1.isNotEmpty) return text1;
+        final segs = r.result?.segments;
+        if (segs is List) {
+          final joined = segs.map((s) => (s.text ?? '').toString()).join(' ');
+          return joined;
+        }
+      } catch (_) {}
+      return r.toString();
+    }
+
+    return _extract(resp);
   }
 
   @override
   Future<void> pause() async {
-    if (!_isRecording) return;
-    await _recorder.pause();
+    if (!_isRecording || _isPaused) return;
+    _isPaused = true;
+    _rotateTimer?.cancel();
+    try {
+      if (await _recorder.isRecording()) {
+        await _recorder.pause();
+      }
+    } catch (_) {}
   }
 
   @override
@@ -183,17 +234,79 @@ class WhisperSpeechEngine implements SpeechEngine {
     void Function(String result)? onFinal,
     void Function(Object error)? onError,
   }) async {
-    if (!_isRecording) return;
-    await _recorder.resume();
+    if (!_isRecording || !_isPaused) return;
+    _isPaused = false;
+
+    try {
+      // If `pause()` paused the file handle, resume; otherwise ensure we’re recording a fresh segment.
+      if (await _recorder.isPaused()) {
+        await _recorder.resume();
+      } else {
+        await _startNewSegment(onError);
+      }
+    } catch (e) {
+      onError?.call(e);
+    }
+
+    _rotateTimer?.cancel();
+    _rotateTimer = Timer.periodic(
+      Duration(seconds: segmentSeconds),
+      (_) async {
+        if (!_isRecording || _isPaused) return;
+        try {
+          _soundLevel = 0.9;
+          Future.delayed(
+              const Duration(milliseconds: 200), () => _soundLevel = 0.2);
+
+          await _rotateSegment(onError);
+          _drainQueue(onFinal, onError);
+        } catch (e) {
+          onError?.call(e);
+        }
+      },
+    );
   }
 
   @override
   Future<void> stop() async {
-    _chunkTimer?.cancel();
-    _chunkTimer = null;
-    if (_isRecording) {
-      await _recorder.stop();
-      _isRecording = false;
+    _rotateTimer?.cancel();
+    _rotateTimer = null;
+
+    // stop current recording & enqueue last file
+    try {
+      if (await _recorder.isRecording()) {
+        await _recorder.stop();
+      }
+    } catch (_) {}
+
+    if (_currentSegPath != null) {
+      final f = File(_currentSegPath!);
+      if (await f.exists() && await f.length() > 44) {
+        _pending.add(_currentSegPath!);
+      } else {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
     }
+    _currentSegPath = null;
+
+    _isRecording = false;
+    _isPaused = false;
+
+    // cleanly finish remaining transcriptions (best-effort)
+    try {
+      while (_pending.isNotEmpty) {
+        final p = _pending.removeAt(0);
+        try {
+          await _transcribe(p);
+        } catch (_) {}
+        try {
+          await File(p).delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    _soundLevel = 0.0;
   }
 }

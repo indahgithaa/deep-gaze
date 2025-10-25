@@ -67,9 +67,9 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
 
     _userAnswers = List.filled(widget.questions.length, null);
     _initializeEyeTracking();
-    _initializeQuizElements();
 
-    // ensure HUD initial state
+    // HUD initial
+    GazeOverlayManager.instance.attach(context);
     GazeOverlayManager.instance.update(
       cursor: const Offset(-1000, -1000),
       visible: false,
@@ -77,8 +77,8 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
       progress: null,
     );
 
-    // IMPORTANT: run bounds calc AFTER first frame to avoid MediaQuery crash
-    _updateBoundsPostFrame();
+    // Register keys + bounds awal (post-frame)
+    _rebuildAllKeysAndBounds();
   }
 
   @override
@@ -96,22 +96,27 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Safe to access MediaQuery here
-    updateBoundsAfterBuild();
+    updateBoundsAfterBuild(); // aman di sini
   }
 
-  // ===== Helpers =====
-  void _initializeQuizElements() {
+  // ===== Keys & Bounds =====
+  void _registerAllKeys() {
     // 4 answer slots (A-D)
     for (int i = 0; i < 4; i++) {
       generateKeyForElement('answer_$i');
     }
-    // nav + back
+    // nav + back (DAFTARKAN SEMUA — meski yang terlihat hanya salah satu)
     generateKeyForElement('back_button');
     generateKeyForElement('submit_button');
     generateKeyForElement('next_button');
     generateKeyForElement('previous_button');
-    // DO NOT call updateBoundsAfterBuild() here (too early in init)
+  }
+
+  void _rebuildAllKeysAndBounds() {
+    if (!mounted) return;
+    clearBounds();
+    _registerAllKeys();
+    _updateBoundsPostFrame();
   }
 
   void _updateBoundsPostFrame() {
@@ -154,7 +159,7 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
     // Hit test
     String? hovered = getElementAtPoint(gaze);
 
-    // Sticky for back button
+    // Sticky untuk back
     final backRect = getBoundsForElement('back_button');
     if (backRect != null && backRect.inflate(_backInflatePx).contains(gaze)) {
       hovered = 'back_button';
@@ -278,6 +283,9 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
     if (_quizCompleted) return;
     _stopDwellTimer();
     setState(() => _userAnswers[_currentQuestionIndex] = i);
+    // tidak perlu rebuild bounds di sini (key tidak berubah),
+    // tapi kalau ini adalah jawaban terakhir yang melengkapi semua,
+    // tombol submit tetap sama key-nya; hanya state "enabled" yang berubah.
   }
 
   void _nextQuestion() {
@@ -287,7 +295,8 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
         _currentQuestionIndex++;
         _showExplanation = false;
       });
-      _updateBoundsPostFrame(); // <— SAFE post-frame
+      // tombol bisa berubah (next -> submit), jadi rebuild keys+bounds
+      _rebuildAllKeysAndBounds();
     }
   }
 
@@ -298,7 +307,7 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
         _currentQuestionIndex--;
         _showExplanation = false;
       });
-      _updateBoundsPostFrame(); // <— SAFE post-frame
+      _rebuildAllKeysAndBounds();
     }
   }
 
@@ -362,7 +371,7 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
                 _currentQuestionIndex = 0;
                 _showExplanation = false;
               });
-              _updateBoundsPostFrame(); // <— SAFE post-frame
+              _rebuildAllKeysAndBounds();
             },
             child: const Text('Retake'),
           ),
@@ -505,7 +514,6 @@ class _QuizPageState extends State<QuizPage> with ResponsiveBoundsMixin {
     );
   }
 
-// helper kecil buat gelapin warna (mirip shade700)
   Color _darken(Color color, [double amount = .1]) {
     final hsl = HSLColor.fromColor(color);
     final hslDark = hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));

@@ -4,9 +4,8 @@ import 'dart:async';
 import '../models/subject.dart';
 import '../models/topic.dart';
 import '../services/global_seeso_service.dart';
-import '../widgets/gaze_point_widget.dart';
-import '../widgets/status_info_widget.dart';
 import '../mixins/responsive_bounds_mixin.dart';
+import '../widgets/gaze_overlay_manager.dart';
 
 class MaterialReaderPage extends StatefulWidget {
   final Subject subject;
@@ -27,298 +26,227 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
   late GlobalSeesoService _eyeTrackingService;
   bool _isDisposed = false;
 
-  // Dwell time selection state
+  // ===== Dwell state =====
   String? _currentDwellingElement;
   double _dwellProgress = 0.0;
   Timer? _dwellTimer;
   DateTime? _dwellStartTime;
 
-  // Dwell time configuration
-  static const int _navigationDwellTimeMs = 800;
-  static const int _buttonDwellTimeMs = 1500;
+  // ===== Dwell config =====
+  static const int _navZoneDwellMs = 800; // scroll zones
+  static const int _buttonDwellMs = 1500; // common buttons
+  static const int _backDwellMs = 1000; // back button
   static const int _dwellUpdateIntervalMs = 50;
 
-  // Reading state
+  // ===== Anti-jitter back button =====
+  static const int _hoverGraceMs = 120;
+  static const double _backInflatePx = 12.0;
+  Timer? _hoverGraceTimer;
+
+  // ===== Reading state =====
   final ScrollController _scrollController = ScrollController();
   bool _isDarkMode = false;
   double _fontSize = 16.0;
+
+  // Auto-scroll
   bool _isAutoScrolling = false;
-
-  // Auto-scroll configuration
   Timer? _autoScrollTimer;
-  static const Duration _autoScrollSpeed = Duration(milliseconds: 50);
 
-  // FIXED: Proper navigation zone configuration
-  final double _navigationZoneHeight =
-      60.0; // Reduced height for better precision
-  final double _headerHeight = 120.0; // Header height
+  // Layout constants
+  final double _navigationZoneHeight = 60.0;
+  final double _headerHeight = 120.0;
 
-  // Override mixin configuration
+  // Bounds ready flag
+  bool _boundsReady = false;
+
+  // ResponsiveBoundsMixin config
   @override
-  double get boundsUpdateDelay =>
-      150.0; // Slightly longer delay for complex layout
-
+  double get boundsUpdateDelay => 150.0;
   @override
-  bool get enableBoundsLogging => true; // Enable detailed logging
+  bool get enableBoundsLogging => true;
 
   @override
   void initState() {
     super.initState();
-    print("DEBUG: MaterialReaderPage initState");
     _eyeTrackingService = GlobalSeesoService();
-
-    // CRITICAL FIX: Use the new page focus system
     _eyeTrackingService.setActivePage('material_reader', _onEyeTrackingUpdate);
+
+    _registerAllKeys();
+
+    // Attach HUD overlay + seed state (insert is post-frame safe inside manager)
+    GazeOverlayManager.instance.attach(context);
+    GazeOverlayManager.instance.update(
+      cursor: const Offset(-10000, -10000),
+      visible: false,
+      highlight: null,
+      progress: null,
+    );
 
     _initializeEyeTracking();
 
-    // Generate GlobalKeys for all interactive elements using the mixin
-    _initializeElementKeys();
-
-    // Calculate button bounds after the first frame using the mixin
-    updateBoundsAfterBuild();
+    // First bounds calc after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      updateBoundsAfterBuild();
+      _boundsReady = true;
+    });
   }
 
-  void _initializeElementKeys() {
-    // Generate keys for all interactive elements using the mixin
+  void _registerAllKeys() {
+    // Zones + buttons
     generateKeyForElement('scroll_up_zone');
     generateKeyForElement('scroll_down_zone');
     generateKeyForElement('back_button');
     generateKeyForElement('dark_mode_button');
     generateKeyForElement('font_increase');
     generateKeyForElement('font_decrease');
-
-    print("DEBUG: Generated ${elementCount} element keys using mixin");
   }
 
   @override
   void dispose() {
     _isDisposed = true;
+    _hoverGraceTimer?.cancel();
     _dwellTimer?.cancel();
-    _dwellTimer = null;
     _autoScrollTimer?.cancel();
-    _autoScrollTimer = null;
     _scrollController.dispose();
 
-    // CRITICAL FIX: Remove this page from the focus system
     _eyeTrackingService.removePage('material_reader');
-
-    // Clean up mixin resources
     clearBounds();
+    GazeOverlayManager.instance.hide();
 
-    print("DEBUG: MaterialReaderPage disposed");
     super.dispose();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Recalculate bounds when dependencies change (like screen rotation)
     updateBoundsAfterBuild();
   }
 
-  void _stopAutoScrollIfNotInZone(String? hoveredElement) {
-    // Stop auto-scroll if user looks away from scroll zones
-    if (_isAutoScrolling &&
-        (hoveredElement == null || !hoveredElement.contains('scroll'))) {
-      _autoScrollTimer?.cancel();
-      _autoScrollTimer = null;
-      _isAutoScrolling = false;
-      print("DEBUG: Auto-scroll stopped - gaze left scroll zones");
-
-      if (mounted) {
-        setState(() {
-          _isAutoScrolling = false;
-        });
-        // ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        // ScaffoldMessenger.of(context).showSnackBar(
-        //   const SnackBar(
-        //     content: Text('Auto-scroll stopped'),
-        //     duration: Duration(seconds: 1),
-        //     backgroundColor: Colors.grey,
-        //   ),
-        // );
-      }
+  Future<void> _initializeEyeTracking() async {
+    if (_isDisposed) return;
+    try {
+      await _eyeTrackingService.initialize(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Eye tracking initialization failed: $e"),
+          backgroundColor: Colors.orange,
+        ),
+      );
     }
   }
 
+  // ================== Eye Tracking ==================
   void _onEyeTrackingUpdate() {
-    if (_isDisposed || !mounted) return;
+    if (!mounted || _isDisposed || !_boundsReady) return;
 
-    final currentGazePoint =
-        Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
+    final gaze = Offset(_eyeTrackingService.gazeX, _eyeTrackingService.gazeY);
 
-    // Bounds validation using mixin helper
-    final screenSize = MediaQuery.of(context).size;
-    if (currentGazePoint.dx < 0 ||
-        currentGazePoint.dy < 0 ||
-        currentGazePoint.dx > screenSize.width ||
-        currentGazePoint.dy > screenSize.height) {
-      // IMPROVED: Stop auto-scroll when gaze goes off-screen
-      _stopAutoScrollIfNotInZone(null);
-      return;
+    // Update HUD
+    GazeOverlayManager.instance.update(
+      cursor: gaze,
+      visible: _eyeTrackingService.isTracking,
+      progress: _currentDwellingElement != null ? _dwellProgress : null,
+    );
+
+    // Hit-test via mixin
+    String? hovered = getElementAtPoint(gaze);
+
+    // Sticky back button area
+    final backRect = getBoundsForElement('back_button');
+    if (backRect != null && backRect.inflate(_backInflatePx).contains(gaze)) {
+      hovered = 'back_button';
     }
 
-    // IMPROVED: Use mixin's precise hit detection
-    String? hoveredElement = getElementAtPoint(currentGazePoint);
-
-    // IMPROVED: Check if we should stop auto-scrolling
-    _stopAutoScrollIfNotInZone(hoveredElement);
-
-    // Debug logging for navigation zones
-    if (hoveredElement != null && hoveredElement.contains('scroll')) {
-      print(
-          "DEBUG: Gaze detected on $hoveredElement at (${currentGazePoint.dx.toInt()}, ${currentGazePoint.dy.toInt()})");
-      final bounds = getBoundsForElement(hoveredElement);
-      print("DEBUG: Zone bounds: $bounds");
+    // Stop auto-scroll if gaze left zones
+    if (_isAutoScrolling &&
+        (hovered == null ||
+            !(hovered == 'scroll_up_zone' || hovered == 'scroll_down_zone'))) {
+      _stopAutoScroll();
     }
 
-    // Only process if hover state changed
-    if (hoveredElement != _currentDwellingElement) {
-      if (hoveredElement != null) {
-        print("DEBUG: Started dwelling on: $hoveredElement");
-        _handleElementHover(hoveredElement);
-      } else if (_currentDwellingElement != null) {
-        print("DEBUG: Stopped dwelling on: $_currentDwellingElement");
+    if (hovered != null) {
+      _hoverGraceTimer?.cancel();
+      if (_currentDwellingElement != hovered) {
+        _handleHover(hovered);
+      }
+    } else if (_currentDwellingElement != null) {
+      // back button uses grace
+      if (_currentDwellingElement == 'back_button') {
+        _hoverGraceTimer?.cancel();
+        _hoverGraceTimer =
+            Timer(Duration(milliseconds: _hoverGraceMs), _stopDwellTimer);
+      } else {
         _stopDwellTimer();
       }
     }
-
-    if (mounted && !_isDisposed) {
-      setState(() {});
-    }
   }
 
-  void _handleElementHover(String elementId) {
-    VoidCallback action;
-    int dwellTime = _buttonDwellTimeMs;
+  void _handleHover(String id) {
+    VoidCallback? action;
+    int dwell = _buttonDwellMs;
 
-    switch (elementId) {
+    switch (id) {
       case 'back_button':
+        dwell = _backDwellMs;
         action = _goBack;
         break;
       case 'dark_mode_button':
         action = _toggleDarkMode;
         break;
       case 'font_increase':
-        action = _increaseFontSize;
+        action = _increaseFont;
         break;
       case 'font_decrease':
-        action = _decreaseFontSize;
+        action = _decreaseFont;
         break;
       case 'scroll_up_zone':
+        dwell = _navZoneDwellMs;
         action = () => _startAutoScroll(isUp: true);
-        dwellTime = _navigationDwellTimeMs;
-        print("DEBUG: Scroll up action assigned");
         break;
       case 'scroll_down_zone':
+        dwell = _navZoneDwellMs;
         action = () => _startAutoScroll(isUp: false);
-        dwellTime = _navigationDwellTimeMs;
-        print("DEBUG: Scroll down action assigned");
         break;
-      default:
-        print("DEBUG: Unknown element: $elementId");
-        return;
     }
 
-    _startDwellTimer(elementId, action, dwellTime);
-  }
-
-  Future<void> _initializeEyeTracking() async {
-    if (_isDisposed || !mounted) return;
-
-    try {
-      print("DEBUG: Initializing eye tracking in MaterialReaderPage");
-      await _eyeTrackingService.initialize(context);
-      print(
-          "DEBUG: Eye tracking successfully initialized in MaterialReaderPage");
-    } catch (e) {
-      print('Eye tracking initialization failed: $e');
-      if (mounted && !_isDisposed) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text("Eye tracking initialization failed: ${e.toString()}"),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+    if (action != null) {
+      _startDwellTimer(id, action, dwell);
     }
   }
 
-  void _startDwellTimer(
-      String elementId, VoidCallback action, int dwellTimeMs) {
-    if (_isDisposed || !mounted) return;
-    if (_currentDwellingElement == elementId) return;
-
+  void _startDwellTimer(String id, VoidCallback action, int dwellMs) {
     _stopDwellTimer();
+    setState(() {
+      _currentDwellingElement = id;
+      _dwellProgress = 0.0;
+    });
 
-    if (mounted && !_isDisposed) {
-      setState(() {
-        _currentDwellingElement = elementId;
-        _dwellProgress = 0.0;
-      });
-    }
-
-    print("DEBUG: Starting dwell timer for: $elementId (${dwellTimeMs}ms)");
     _dwellStartTime = DateTime.now();
-    _dwellTimer = Timer.periodic(
-      Duration(milliseconds: _dwellUpdateIntervalMs),
-      (timer) {
-        if (_isDisposed || !mounted || _currentDwellingElement != elementId) {
-          timer.cancel();
-          return;
-        }
+    _dwellTimer =
+        Timer.periodic(Duration(milliseconds: _dwellUpdateIntervalMs), (t) {
+      if (!mounted || _isDisposed || _currentDwellingElement != id) {
+        t.cancel();
+        return;
+      }
+      final elapsed =
+          DateTime.now().difference(_dwellStartTime!).inMilliseconds;
+      final p = (elapsed / dwellMs).clamp(0.0, 1.0);
+      setState(() => _dwellProgress = p);
 
-        final elapsed =
-            DateTime.now().difference(_dwellStartTime!).inMilliseconds;
-        final progress = (elapsed / dwellTimeMs).clamp(0.0, 1.0);
-
-        if (mounted && !_isDisposed) {
-          setState(() {
-            _dwellProgress = progress;
-          });
-        }
-
-        if (progress >= 1.0) {
-          timer.cancel();
-          print(
-              "DEBUG: Dwell timer completed for: $elementId, executing action");
-          if (mounted && !_isDisposed) {
-            action();
-          }
-        }
-      },
-    );
+      if (p >= 1.0) {
+        t.cancel();
+        action();
+      }
+    });
   }
 
   void _stopDwellTimer() {
     _dwellTimer?.cancel();
     _dwellTimer = null;
-
-    // IMPROVED: Only stop auto-scroll if user looks away from scroll zones
-    if (_isAutoScrolling &&
-        _currentDwellingElement != null &&
-        !_currentDwellingElement!.contains('scroll')) {
-      _autoScrollTimer?.cancel();
-      _autoScrollTimer = null;
-      _isAutoScrolling = false;
-      print("DEBUG: Auto-scroll stopped - user looked away from scroll zones");
-
-      if (mounted) {
-        // ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        // ScaffoldMessenger.of(context).showSnackBar(
-        //   const SnackBar(
-        //     content: Text('Auto-scroll stopped'),
-        //     duration: Duration(seconds: 1),
-        //     backgroundColor: Colors.grey,
-        //   ),
-        // );
-      }
-    }
-
-    if (mounted && !_isDisposed) {
+    if (mounted) {
       setState(() {
         _currentDwellingElement = null;
         _dwellProgress = 0.0;
@@ -326,282 +254,134 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
     }
   }
 
+  // ================== Actions ==================
   void _goBack() {
-    if (_isDisposed || !mounted) return;
     _stopDwellTimer();
     Navigator.of(context).pop();
   }
 
   void _toggleDarkMode() {
-    if (_isDisposed || !mounted) return;
     _stopDwellTimer();
-    setState(() {
-      _isDarkMode = !_isDarkMode;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${_isDarkMode ? 'Dark' : 'Light'} mode enabled'),
-        duration: const Duration(seconds: 1),
-        backgroundColor: _isDarkMode ? Colors.grey.shade800 : Colors.blue,
-      ),
-    );
+    setState(() => _isDarkMode = !_isDarkMode);
   }
 
-  void _increaseFontSize() {
-    if (_isDisposed || !mounted) return;
+  void _increaseFont() {
     _stopDwellTimer();
-    setState(() {
-      _fontSize = (_fontSize + 2.0).clamp(12.0, 24.0);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Font size increased: ${_fontSize.toInt()}px'),
-        duration: const Duration(seconds: 1),
-        backgroundColor: Colors.green,
-      ),
-    );
+    setState(() => _fontSize = (_fontSize + 2).clamp(12.0, 28.0));
   }
 
-  void _decreaseFontSize() {
-    if (_isDisposed || !mounted) return;
+  void _decreaseFont() {
     _stopDwellTimer();
-    setState(() {
-      _fontSize = (_fontSize - 2.0).clamp(12.0, 24.0);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Font size decreased: ${_fontSize.toInt()}px'),
-        duration: const Duration(seconds: 1),
-        backgroundColor: Colors.orange,
-      ),
-    );
+    setState(() => _fontSize = (_fontSize - 2).clamp(12.0, 28.0));
   }
 
   void _startAutoScroll({required bool isUp}) {
-    if (_isDisposed || !mounted) return;
+    if (_isAutoScrolling) return;
+    if (!_scrollController.hasClients) return;
+
     _stopDwellTimer();
+    setState(() => _isAutoScrolling = true);
 
-    if (_isAutoScrolling) {
-      print("DEBUG: Already auto-scrolling, ignoring");
-      return;
-    }
+    const double step = 3.0; // px per frame
+    const frame = Duration(milliseconds: 16); // ~60 FPS
 
-    // Check if scrolling is possible
-    if (!_scrollController.hasClients) {
-      print("DEBUG: ScrollController has no clients");
-      return;
-    }
-
-    final currentOffset = _scrollController.offset;
-    final maxOffset = _scrollController.position.maxScrollExtent;
-
-    if (isUp && currentOffset <= 0) {
-      print("DEBUG: Already at top, cannot scroll up");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Already at the top'),
-          duration: Duration(seconds: 1),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    if (!isUp && currentOffset >= maxOffset) {
-      print("DEBUG: Already at bottom, cannot scroll down");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Already at the bottom'),
-          duration: Duration(seconds: 1),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isAutoScrolling = true;
-    });
-
-    print("DEBUG: Starting smooth auto-scroll ${isUp ? 'UP' : 'DOWN'}");
-
-    // Show feedback
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Auto-scrolling ${isUp ? 'up' : 'down'}...'),
-        duration: const Duration(seconds: 4),
-        backgroundColor: isUp ? Colors.purple : Colors.teal,
-      ),
-    );
-
-    // IMPROVED: Smooth scrolling implementation with smaller increments
-    const scrollIncrement = 3.0; // Much smaller increment for smoothness
-    const frameDuration = Duration(milliseconds: 16); // ~60 FPS
-
-    _autoScrollTimer = Timer.periodic(frameDuration, (timer) {
-      if (_isDisposed || !mounted || !_scrollController.hasClients) {
-        timer.cancel();
-        _isAutoScrolling = false;
-        print("DEBUG: Auto-scroll stopped - disposed or no clients");
+    _autoScrollTimer = Timer.periodic(frame, (timer) {
+      if (!mounted || !_scrollController.hasClients) {
+        _stopAutoScroll();
         return;
       }
 
-      final currentOffset = _scrollController.offset;
-      final maxOffset = _scrollController.position.maxScrollExtent;
+      final cur = _scrollController.offset;
+      final max = _scrollController.position.maxScrollExtent;
+      double next = cur + (isUp ? -step : step);
 
-      // Calculate new offset with smooth increment
-      final scrollAmount = isUp ? -scrollIncrement : scrollIncrement;
-      double newOffset = currentOffset + scrollAmount;
-
-      // Check boundaries and stop if reached
-      if (isUp && newOffset <= 0) {
-        newOffset = 0;
-        timer.cancel();
-        _isAutoScrolling = false;
-        print("DEBUG: Reached top of content");
-        if (mounted) {
-          setState(() {
-            _isAutoScrolling = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Reached the top'),
-              duration: Duration(seconds: 1),
-              backgroundColor: Colors.purple,
-            ),
-          );
-        }
-      } else if (!isUp && newOffset >= maxOffset) {
-        newOffset = maxOffset;
-        timer.cancel();
-        _isAutoScrolling = false;
-        print("DEBUG: Reached bottom of content");
-        if (mounted) {
-          setState(() {
-            _isAutoScrolling = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Reached the bottom'),
-              duration: Duration(seconds: 1),
-              backgroundColor: Colors.teal,
-            ),
-          );
-        }
+      if (next <= 0) {
+        next = 0;
+        _stopAutoScroll();
+      } else if (next >= max) {
+        next = max;
+        _stopAutoScroll();
       }
 
-      // Perform smooth scroll without animation to avoid conflicts
       try {
-        _scrollController.jumpTo(newOffset);
-      } catch (e) {
-        print("DEBUG: Error during scroll: $e");
-        timer.cancel();
-        _isAutoScrolling = false;
-        if (mounted) {
-          setState(() {
-            _isAutoScrolling = false;
-          });
-        }
+        _scrollController.jumpTo(next);
+      } catch (_) {
+        _stopAutoScroll();
       }
     });
 
-    // Auto-stop after 8 seconds to prevent infinite scrolling
+    // Fail-safe stop after 8s
     Timer(const Duration(seconds: 8), () {
-      if (_autoScrollTimer?.isActive == true) {
-        _autoScrollTimer?.cancel();
-        _autoScrollTimer = null;
-        if (mounted) {
-          setState(() {
-            _isAutoScrolling = false;
-          });
-          print("DEBUG: Auto-scroll timeout reached");
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Auto-scroll stopped'),
-              duration: Duration(seconds: 1),
-              backgroundColor: Colors.grey,
-            ),
-          );
-        }
-      }
+      if (_isAutoScrolling) _stopAutoScroll();
     });
   }
 
-  Widget _buildNavigationControls() {
-    return Positioned(
-      top: 50,
-      right: 20,
-      child: Column(
-        children: [
-          // Dark mode toggle
-          _buildControlButton(
-            'dark_mode_button',
-            _isDarkMode ? Icons.light_mode : Icons.dark_mode,
-            _isDarkMode ? Colors.yellow : Colors.indigo,
-            'Toggle ${_isDarkMode ? 'Light' : 'Dark'} Mode',
-          ),
-          const SizedBox(height: 10),
-          // Font size controls
-          _buildControlButton(
-            'font_increase',
-            Icons.add,
-            Colors.green,
-            'Increase Font',
-          ),
-          const SizedBox(height: 5),
-          _buildControlButton(
-            'font_decrease',
-            Icons.remove,
-            Colors.orange,
-            'Decrease Font',
-          ),
-        ],
-      ),
-    );
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    if (mounted) setState(() => _isAutoScrolling = false);
   }
 
-  Widget _buildControlButton(
-      String elementId, IconData icon, Color color, String tooltip) {
-    final isCurrentlyDwelling = _currentDwellingElement == elementId;
-    final key = generateKeyForElement(elementId); // Use mixin to get/create key
-
+  // ================== UI ==================
+  Widget _header() {
     return Container(
-      key: key, // Assign the GlobalKey here
-      width: 50,
-      height: 50,
-      child: Material(
-        elevation: isCurrentlyDwelling ? 8 : 4,
-        borderRadius: BorderRadius.circular(25),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(25),
-            color: isCurrentlyDwelling
-                ? color.withOpacity(0.8)
-                : color.withOpacity(0.1),
-            border: Border.all(
-              color: isCurrentlyDwelling ? color : color.withOpacity(0.3),
-              width: 2,
-            ),
-          ),
-          child: Stack(
+      height: _headerHeight,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Color(int.parse('0xFF${widget.subject.colors[0].substring(1)}')),
+            Color(int.parse('0xFF${widget.subject.colors[1].substring(1)}')),
+          ],
+        ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
             children: [
-              if (isCurrentlyDwelling)
-                Positioned.fill(
-                  child: CircularProgressIndicator(
-                    value: _dwellProgress,
-                    strokeWidth: 3,
-                    backgroundColor: Colors.white.withOpacity(0.3),
-                    valueColor: AlwaysStoppedAnimation<Color>(color),
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: Container(
+                  key: generateKeyForElement('back_button'),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      const Icon(Icons.arrow_back,
+                          color: Colors.white, size: 20),
+                      if (_currentDwellingElement == 'back_button')
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: _dwellProgress,
+                            child: Container(height: 3, color: Colors.white),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-              Center(
-                child: Icon(
-                  icon,
-                  color: isCurrentlyDwelling ? Colors.white : color,
-                  size: 24,
+              ),
+              Expanded(
+                child: Text(
+                  widget.topic.name,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white),
                 ),
               ),
+              const SizedBox(width: 44),
             ],
           ),
         ),
@@ -609,9 +389,70 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
     );
   }
 
-  Widget _buildMaterialContent() {
+  Widget _controlsFloating() {
+    return Positioned(
+      top: 50,
+      right: 20,
+      child: Column(
+        children: [
+          _controlButton(
+            id: 'dark_mode_button',
+            icon: _isDarkMode ? Icons.light_mode : Icons.dark_mode,
+            color: _isDarkMode ? Colors.yellow : Colors.indigo,
+          ),
+          const SizedBox(height: 10),
+          _controlButton(
+              id: 'font_increase', icon: Icons.add, color: Colors.green),
+          const SizedBox(height: 5),
+          _controlButton(
+              id: 'font_decrease', icon: Icons.remove, color: Colors.orange),
+        ],
+      ),
+    );
+  }
+
+  Widget _controlButton({
+    required String id,
+    required IconData icon,
+    required Color color,
+  }) {
+    final dwell = _currentDwellingElement == id;
+    return Container(
+      key: generateKeyForElement(id),
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(
+        color: dwell ? color.withOpacity(0.85) : color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(
+            color: dwell ? color : color.withOpacity(0.35), width: 2),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x22000000), blurRadius: 6, offset: Offset(0, 3))
+        ],
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Icon(icon, color: dwell ? Colors.white : color, size: 22),
+          if (dwell)
+            Positioned.fill(
+              child: CircularProgressIndicator(
+                value: _dwellProgress,
+                strokeWidth: 3,
+                backgroundColor: Colors.white.withOpacity(0.25),
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _content() {
     return Container(
       padding: const EdgeInsets.all(20),
+      color: _isDarkMode ? Colors.grey.shade900 : Colors.white,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -624,162 +465,92 @@ class _MaterialReaderPageState extends State<MaterialReaderPage>
             ),
           ),
           const SizedBox(height: 20),
-          // Chapter 1
-          Text(
-            'Chapter 1: Introduction',
-            style: TextStyle(
-              fontSize: _fontSize + 4,
-              fontWeight: FontWeight.w600,
-              color: _isDarkMode ? Colors.blue.shade300 : Colors.blue.shade700,
-            ),
-          ),
+          _chapter('Chapter 1: Introduction', Colors.blue),
           const SizedBox(height: 16),
-          Text(
-            _getSampleContent(),
-            style: TextStyle(
-              fontSize: _fontSize,
-              height: 1.6,
-              color: _isDarkMode ? Colors.white70 : Colors.black87,
-            ),
-          ),
+          _para(_sample()),
           const SizedBox(height: 24),
-          // Chapter 2
-          Text(
-            'Chapter 2: Key Concepts',
-            style: TextStyle(
-              fontSize: _fontSize + 4,
-              fontWeight: FontWeight.w600,
-              color:
-                  _isDarkMode ? Colors.green.shade300 : Colors.green.shade700,
-            ),
-          ),
+          _chapter('Chapter 2: Key Concepts', Colors.green),
           const SizedBox(height: 16),
-          Text(
-            _getSampleContent(),
-            style: TextStyle(
-              fontSize: _fontSize,
-              height: 1.6,
-              color: _isDarkMode ? Colors.white70 : Colors.black87,
-            ),
-          ),
+          _para(_sample()),
           const SizedBox(height: 24),
-          // Important Notes Box
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _isDarkMode
-                  ? Colors.yellow.shade900.withOpacity(0.3)
-                  : Colors.yellow.shade100,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: _isDarkMode
-                    ? Colors.yellow.shade600
-                    : Colors.yellow.shade600,
-                width: 2,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.lightbulb,
-                      color: _isDarkMode
-                          ? Colors.yellow.shade300
-                          : Colors.yellow.shade700,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Important Notes',
-                      style: TextStyle(
-                        fontSize: _fontSize + 2,
-                        fontWeight: FontWeight.bold,
-                        color: _isDarkMode
-                            ? Colors.yellow.shade300
-                            : Colors.yellow.shade800,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Remember these key points when studying this material. Practice regularly and don\'t hesitate to ask questions if you need clarification.',
-                  style: TextStyle(
-                    fontSize: _fontSize,
-                    color: _isDarkMode
-                        ? Colors.yellow.shade200
-                        : Colors.yellow.shade800,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _notes(),
           const SizedBox(height: 24),
-          // More chapters...
-          Text(
-            'Chapter 3: Examples and Practice',
-            style: TextStyle(
-              fontSize: _fontSize + 4,
-              fontWeight: FontWeight.w600,
-              color:
-                  _isDarkMode ? Colors.purple.shade300 : Colors.purple.shade700,
-            ),
-          ),
+          _chapter('Chapter 3: Examples and Practice', Colors.purple),
           const SizedBox(height: 16),
-          Text(
-            _getSampleContent(),
-            style: TextStyle(
-              fontSize: _fontSize,
-              height: 1.6,
-              color: _isDarkMode ? Colors.white70 : Colors.black87,
-            ),
-          ),
+          _para(_sample()),
           const SizedBox(height: 24),
-          Text(
-            'Chapter 4: Advanced Topics',
-            style: TextStyle(
-              fontSize: _fontSize + 4,
-              fontWeight: FontWeight.w600,
-              color: _isDarkMode ? Colors.red.shade300 : Colors.red.shade700,
-            ),
-          ),
+          _chapter('Chapter 4: Advanced Topics', Colors.red),
           const SizedBox(height: 16),
-          Text(
-            _getSampleContent(),
-            style: TextStyle(
-              fontSize: _fontSize,
-              height: 1.6,
-              color: _isDarkMode ? Colors.white70 : Colors.black87,
-            ),
-          ),
+          _para(_sample()),
           const SizedBox(height: 24),
-          Text(
-            'Chapter 5: Conclusion',
-            style: TextStyle(
-              fontSize: _fontSize + 4,
-              fontWeight: FontWeight.w600,
-              color: _isDarkMode ? Colors.cyan.shade300 : Colors.cyan.shade700,
-            ),
-          ),
+          _chapter('Chapter 5: Conclusion', Colors.cyan),
           const SizedBox(height: 16),
-          Text(
-            _getSampleContent(),
-            style: TextStyle(
-              fontSize: _fontSize,
-              height: 1.6,
-              color: _isDarkMode ? Colors.white70 : Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 100), // Extra space for scroll testing
+          _para(_sample()),
+          const SizedBox(height: 100),
         ],
       ),
     );
   }
 
-  String _getSampleContent() {
-    return '''The simple past tense is used to describe actions that were completed in the past. It tells us about events that happened at a specific time that has already finished.
+  Widget _chapter(String t, MaterialColor c) {
+    return Text(
+      t,
+      style: TextStyle(
+        fontSize: _fontSize + 4,
+        fontWeight: FontWeight.w600,
+        color: _isDarkMode ? c.shade300 : c.shade700,
+      ),
+    );
+  }
+
+  Widget _para(String t) {
+    return Text(
+      t,
+      style: TextStyle(
+        fontSize: _fontSize,
+        height: 1.6,
+        color: _isDarkMode ? Colors.white70 : Colors.black87,
+      ),
+    );
+  }
+
+  Widget _notes() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _isDarkMode
+            ? Colors.yellow.shade900.withOpacity(0.3)
+            : Colors.yellow.shade100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.yellow.shade600, width: 2),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lightbulb,
+              color:
+                  _isDarkMode ? Colors.yellow.shade300 : Colors.yellow.shade700,
+              size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Remember these key points when studying this material. Practice regularly and don\'t hesitate to ask questions if you need clarification.',
+              style: TextStyle(
+                fontSize: _fontSize,
+                color: _isDarkMode
+                    ? Colors.yellow.shade200
+                    : Colors.yellow.shade800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _sample() {
+    return '''
+The simple past tense is used to describe actions that were completed in the past. It tells us about events that happened at a specific time that has already finished.
 
 We form the simple past tense by adding -ed to regular verbs, but many common verbs are irregular and have special past tense forms that you need to memorize.
 
@@ -787,87 +558,25 @@ For example:
 • Regular verbs: walk → walked, play → played, study → studied
 • Irregular verbs: go → went, eat → ate, see → saw, have → had
 
-The simple past tense is very important in English because we use it constantly when telling stories, describing past experiences, or talking about completed actions.''';
+The simple past tense is very important in English because we use it constantly when telling stories, describing past experiences, or talking about completed actions.
+''';
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+
     return Scaffold(
       backgroundColor: _isDarkMode ? Colors.grey.shade900 : Colors.white,
       body: Stack(
         children: [
-          // Main content with proper layout
           Column(
             children: [
-              // Header
-              Container(
-                height: _headerHeight,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                    colors: [
-                      Color(int.parse(
-                          '0xFF${widget.subject.colors[0].substring(1)}')),
-                      Color(int.parse(
-                          '0xFF${widget.subject.colors[1].substring(1)}')),
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      children: [
-                        GestureDetector(
-                          onTap: _goBack,
-                          child: Container(
-                            key: generateKeyForElement(
-                                'back_button'), // Use mixin
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.arrow_back,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                        ),
-                        const Expanded(
-                          child: Text(
-                            'Simple Past Tense',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.visibility,
-                            color: Colors.blue,
-                            size: 20,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              _header(),
 
-              // FIXED: Scroll up zone with precise bounds using mixin
+              // ===== Scroll Up Zone =====
               Container(
-                key: generateKeyForElement('scroll_up_zone'), // Use mixin
+                key: generateKeyForElement('scroll_up_zone'),
                 height: _navigationZoneHeight,
                 width: double.infinity,
                 decoration: BoxDecoration(
@@ -886,22 +595,20 @@ The simple past tense is very important in English because we use it constantly 
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.keyboard_arrow_up,
-                        color: _currentDwellingElement == 'scroll_up_zone'
-                            ? Colors.purple.shade700
-                            : Colors.purple.withOpacity(0.7),
-                        size: 28,
-                      ),
+                      Icon(Icons.keyboard_arrow_up,
+                          size: 26,
+                          color: _currentDwellingElement == 'scroll_up_zone'
+                              ? Colors.purple.shade700
+                              : Colors.purple.withOpacity(0.8)),
                       const SizedBox(width: 8),
                       Text(
                         'Look here to scroll up',
                         style: TextStyle(
-                          color: _currentDwellingElement == 'scroll_up_zone'
-                              ? Colors.purple.shade700
-                              : Colors.purple.withOpacity(0.8),
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
+                          color: _currentDwellingElement == 'scroll_up_zone'
+                              ? Colors.purple.shade700
+                              : Colors.purple.withOpacity(0.85),
                         ),
                       ),
                       if (_currentDwellingElement == 'scroll_up_zone')
@@ -922,7 +629,7 @@ The simple past tense is very important in English because we use it constantly 
                 ),
               ),
 
-              // SCROLLABLE CONTENT AREA
+              // ===== Scrollable Content =====
               Expanded(
                 child: Container(
                   width: double.infinity,
@@ -931,15 +638,15 @@ The simple past tense is very important in English because we use it constantly 
                     controller: _scrollController,
                     child: SingleChildScrollView(
                       controller: _scrollController,
-                      child: _buildMaterialContent(),
+                      child: _content(),
                     ),
                   ),
                 ),
               ),
 
-              // FIXED: Scroll down zone with precise bounds and proper positioning using mixin
+              // ===== Scroll Down Zone =====
               Container(
-                key: generateKeyForElement('scroll_down_zone'), // Use mixin
+                key: generateKeyForElement('scroll_down_zone'),
                 height: _navigationZoneHeight,
                 width: double.infinity,
                 decoration: BoxDecoration(
@@ -958,22 +665,20 @@ The simple past tense is very important in English because we use it constantly 
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.keyboard_arrow_down,
-                        color: _currentDwellingElement == 'scroll_down_zone'
-                            ? Colors.teal.shade700
-                            : Colors.teal.withOpacity(0.7),
-                        size: 28,
-                      ),
+                      Icon(Icons.keyboard_arrow_down,
+                          size: 26,
+                          color: _currentDwellingElement == 'scroll_down_zone'
+                              ? Colors.teal.shade700
+                              : Colors.teal.withOpacity(0.8)),
                       const SizedBox(width: 8),
                       Text(
                         'Look here to scroll down',
                         style: TextStyle(
-                          color: _currentDwellingElement == 'scroll_down_zone'
-                              ? Colors.teal.shade700
-                              : Colors.teal.withOpacity(0.8),
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
+                          color: _currentDwellingElement == 'scroll_down_zone'
+                              ? Colors.teal.shade700
+                              : Colors.teal.withOpacity(0.85),
                         ),
                       ),
                       if (_currentDwellingElement == 'scroll_down_zone')
@@ -996,32 +701,14 @@ The simple past tense is very important in English because we use it constantly 
             ],
           ),
 
-          // Control buttons - FLOATING OVERLAY
-          _buildNavigationControls(),
+          // Floating control buttons
+          _controlsFloating(),
 
-          // Gaze point indicator
-          GazePointWidget(
-            gazeX: _eyeTrackingService.gazeX,
-            gazeY: _eyeTrackingService.gazeY,
-            isVisible: _eyeTrackingService.isTracking,
-          ),
-
-          // // Status information
-          // StatusInfoWidget(
-          //   statusMessage: _eyeTrackingService.statusMessage,
-          //   currentPage: 5,
-          //   totalPages: 5,
-          //   gazeX: _eyeTrackingService.gazeX,
-          //   gazeY: _eyeTrackingService.gazeY,
-          //   currentDwellingElement: _currentDwellingElement,
-          //   dwellProgress: _dwellProgress,
-          // ),
-
-          // Auto-scroll indicator
+          // Auto-scroll overlay hint
           if (_isAutoScrolling)
             Positioned(
-              top: MediaQuery.of(context).size.height / 2 - 60,
-              left: MediaQuery.of(context).size.width / 2 - 60,
+              top: size.height / 2 - 60,
+              left: size.width / 2 - 60,
               child: Container(
                 width: 120,
                 height: 120,
@@ -1032,30 +719,18 @@ The simple past tense is very important in English because we use it constantly 
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 3,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Auto-scrolling...',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Look away to stop',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 10,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+                  children: const [
+                    CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 3),
+                    SizedBox(height: 12),
+                    Text('Auto-scrolling...',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
+                    SizedBox(height: 4),
+                    Text('Look away to stop',
+                        style: TextStyle(color: Colors.white70, fontSize: 10)),
                   ],
                 ),
               ),
